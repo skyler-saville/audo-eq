@@ -9,6 +9,9 @@ readme = "README.md"
 include = "audo_eq"
 from = "src"
 
+[tool.poetry.scripts]
+audo_eq = "audo_eq.cli:main"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 pedalboard = "^0.7.0"    # Core audio processing
@@ -18,6 +21,7 @@ scipy = "^1.10.0"        # Wavelets, advanced FFT, filters
 librosa = "^0.10.0"      # General audio analysis (BPM, features)
 pydantic = "^2.0.0"      # Robust configuration & settings validation
 soundfile = "^0.12.0"    # Reliable audio I/O (WAV)
+pyyaml = "^6.0.1"        # YAML config support
 
 
 [tool.poetry.group.dev.dependencies]
