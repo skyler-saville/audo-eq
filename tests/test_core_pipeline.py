@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.core import MasteringPipeline
+from audo_eq.core import MasteringPipeline
 
 
 class AddProcessor:

@@ -5,6 +5,10 @@ description = "A modular, reference-based auto-mastering engine."
 authors = ["Skyler Saville <skylersaville@gmail.com>"]
 readme = "README.md"
 
+[[tool.poetry.packages]]
+include = "audo_eq"
+from = "src"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 pedalboard = "^0.7.0"    # Core audio processing

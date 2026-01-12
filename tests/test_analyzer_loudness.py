@@ -1,4 +1,4 @@
-from src.analyzer.loudness import LoudnessAnalyzer
+from audo_eq.analyzer.loudness import LoudnessAnalyzer
 
 
 def test_loudness_analyzer_monotonic(sine_wave):

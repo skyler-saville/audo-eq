@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.analyzer.spectrum import SpectrumAnalyzer
+from audo_eq.analyzer.spectrum import SpectrumAnalyzer
 
 
 def test_spectrum_analyzer_normalizes_output(sine_wave):
