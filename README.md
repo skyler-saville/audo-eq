@@ -269,4 +269,3 @@ Audo_EQ stands on the shoulders of giants:
 Audo_EQ is released under the **MIT License**. See the `LICENSE` file for details.
 
 This means you can use it commercially, privately, modify it, and distribute it, with minimal restrictions.
-# audo-eq
