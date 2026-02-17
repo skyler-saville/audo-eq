@@ -4,7 +4,7 @@ from pathlib import Path
 
 import typer
 
-from .core import MasteringRequest, master_file
+from .core import ingest_local_mastering_request, master_file
 
 app = typer.Typer(help="Audo_EQ command line interface")
 
@@ -17,7 +17,8 @@ def master_command(
 ) -> None:
     """Master a target audio file against a reference file."""
 
-    written = master_file(MasteringRequest(target, reference, output))
+    request = ingest_local_mastering_request(target, reference, output)
+    written = master_file(request)
     typer.echo(f"Mastered audio written to: {written}")
 
 
