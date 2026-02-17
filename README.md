@@ -17,6 +17,66 @@ src/audo_eq/
 poetry install
 ```
 
+## Environment configuration for Docker Compose
+
+1. Copy the example file and create a local environment file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Update `.env` values as needed for your machine/environment.
+
+### Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `API_HOST` | `0.0.0.0` | Host interface bound by the API process inside the container. `0.0.0.0` is a safe default so the service is reachable from Docker networking. |
+| `API_PORT` | `8000` | Port published by Compose (`host:container`) and used by app config. `8000` is a common local dev default. |
+| `UVICORN_WORKERS` | `1` | Number of Uvicorn worker processes used by the production-style Compose profile. `1` is safe and lightweight for local/small environments. |
+| `COMPOSE_PROJECT_NAME` (optional) | unset | Optional Compose project prefix for container/network names to avoid collisions across multiple stacks. |
+| `COMPOSE_PROFILES` (optional) | unset | Optional Compose profiles selector if you add profile-gated services later. |
+
+> `.env` is local-only configuration and should remain uncommitted. The repo ignores it via `.gitignore`.
+
+## Docker usage
+
+### Local development (hot reload)
+
+Start with the base and development override files:
+
+```bash
+docker compose -f compose.yaml -f compose.override.yaml up --build
+```
+
+### Production-style startup
+
+Start with the base and production override files:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+```
+
+Stop and remove services when done:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml down
+```
+
+### Verify service health
+
+Check the health endpoint:
+
+```bash
+curl http://127.0.0.1:${API_PORT:-8000}/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
 ## Run as CLI
 
 ```bash
