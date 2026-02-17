@@ -6,12 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from .audio_contract import (
-    TARGET_PCM_CHANNEL_COUNT,
-    TARGET_PCM_ENCODING,
-    TARGET_PCM_SAMPLE_RATE_HZ,
-    ensure_supported_path,
-)
+from .ingest_validation import AudioMetadata, validate_audio_file
 
 
 class ValidationStatus(str, Enum):
@@ -24,16 +19,7 @@ class ValidationStatus(str, Enum):
 
 @dataclass(slots=True)
 class AudioAsset:
-    """Central domain model representing ingested audio.
-
-    Invariants
-    ----------
-    * ``source_uri`` is a canonical locator for the original source, either a
-      ``file://`` URI or a provider URI from an external ingest system.
-    * ``raw_bytes`` contain original payload bytes as received at ingest.
-    * All processing modules after ingest assume normalized float PCM using the
-      target contract in :mod:`audo_eq.audio_contract`.
-    """
+    """Central domain model representing ingested audio."""
 
     source_uri: str
     raw_bytes: bytes
@@ -57,25 +43,26 @@ class MasteringRequest:
     output_path: Path
 
 
-def _validated_asset_from_path(path: Path) -> AudioAsset:
-    if not path.exists():
-        raise FileNotFoundError(f"Audio not found: {path}")
-
-    ensure_supported_path(path)
-
+def _asset_from_metadata(source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
     return AudioAsset(
-        source_uri=path.resolve().as_uri(),
-        raw_bytes=path.read_bytes(),
-        duration_seconds=None,
-        sample_rate_hz=TARGET_PCM_SAMPLE_RATE_HZ,
-        channel_count=TARGET_PCM_CHANNEL_COUNT,
-        bit_depth=32,
-        encoding=TARGET_PCM_ENCODING,
+        source_uri=source_uri,
+        raw_bytes=raw_bytes,
+        duration_seconds=metadata.duration_seconds,
+        sample_rate_hz=metadata.sample_rate_hz,
+        channel_count=metadata.channel_count,
+        bit_depth=None,
+        encoding=metadata.codec,
         integrated_lufs=None,
         loudness_range_lu=None,
         true_peak_dbtp=None,
         validation_status=ValidationStatus.VALIDATED,
     )
+
+
+def _validated_asset_from_path(path: Path) -> AudioAsset:
+    metadata = validate_audio_file(path)
+    raw_bytes = path.read_bytes()
+    return _asset_from_metadata(path.resolve().as_uri(), raw_bytes, metadata)
 
 
 def ingest_local_mastering_request(
@@ -91,11 +78,7 @@ def ingest_local_mastering_request(
 
 
 def master_bytes(target_bytes: bytes, reference_bytes: bytes) -> bytes:
-    """Master target audio bytes against a reference.
-
-    This scaffold currently returns the target bytes unchanged so both CLI and API
-    can share one stable execution path while DSP modules are implemented.
-    """
+    """Master target audio bytes against a reference."""
 
     if not target_bytes:
         raise ValueError("Target audio is empty.")

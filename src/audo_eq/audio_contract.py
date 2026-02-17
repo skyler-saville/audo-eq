@@ -11,17 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .ingest_validation import SUPPORTED_EXTENSIONS, SUPPORTED_MIME_TYPES
+
 # Supported source extensions (lower-case, with leading dot).
-ACCEPTED_SOURCE_EXTENSIONS: tuple[str, ...] = (".wav", ".aiff", ".aif", ".flac")
+ACCEPTED_SOURCE_EXTENSIONS: tuple[str, ...] = SUPPORTED_EXTENSIONS
 
 # Common MIME types accepted by API uploads.
-ACCEPTED_SOURCE_MIME_TYPES: tuple[str, ...] = (
-    "audio/wav",
-    "audio/x-wav",
-    "audio/aiff",
-    "audio/x-aiff",
-    "audio/flac",
-)
+ACCEPTED_SOURCE_MIME_TYPES: tuple[str, ...] = SUPPORTED_MIME_TYPES
 
 # Normalization target used between ingest and DSP/reference/mastering modules.
 TARGET_PCM_SAMPLE_RATE_HZ = 48_000
