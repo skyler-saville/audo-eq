@@ -1,5 +1,5 @@
 """Public package exports for Audo_EQ."""
 
-from .core import MasteringRequest, master_file, master_bytes
+from .core import AudioAsset, MasteringRequest, ingest_local_mastering_request, master_bytes, master_file
 
-__all__ = ["MasteringRequest", "master_file", "master_bytes"]
+__all__ = ["AudioAsset", "MasteringRequest", "ingest_local_mastering_request", "master_bytes", "master_file"]
