@@ -1,0 +1,12 @@
+services:
+  audo-eq-api:
+    volumes:
+      - ./src:/app/src
+    command:
+      - uvicorn
+      - audo_eq.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
