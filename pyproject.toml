@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "audo-eq"
+version = "0.1.0"
+description = "Audo_EQ dual-interface scaffold (CLI + FastAPI)"
+authors = ["Audo_EQ Contributors"]
+readme = "README.md"
+packages = [{ include = "audo_eq", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.0"
+typer = "^0.12.5"
+uvicorn = {version = "^0.30.6", extras = ["standard"]}
+python-multipart = "^0.0.9"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+
+[tool.poetry.scripts]
+audo-eq = "audo_eq.cli:app"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
