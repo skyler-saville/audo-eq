@@ -1,10 +1,13 @@
 """FastAPI interface for Audo_EQ."""
 
+from uuid import uuid4
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from .core import _asset_from_metadata, master_bytes
 from .ingest_validation import IngestValidationError, validate_audio_bytes
+from .storage import store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
 
@@ -47,4 +50,14 @@ async def master(
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error
 
-    return Response(content=mastered_bytes, media_type=target.content_type or "audio/wav")
+    response = Response(content=mastered_bytes, media_type=target.content_type or "audio/wav")
+
+    storage_url = store_mastered_audio(
+        object_name=f"mastered/{uuid4()}.wav",
+        audio_bytes=mastered_bytes,
+        content_type=target.content_type or "audio/wav",
+    )
+    if storage_url:
+        response.headers["X-Mastered-Object-Url"] = storage_url
+
+    return response
