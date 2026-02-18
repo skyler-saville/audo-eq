@@ -15,6 +15,8 @@ python-multipart = "^0.0.9"
 flask = "^3.0.3"
 requests = "^2.32.3"
 minio = "^7.2.15"
+pedalboard = "^0.9.16"
+numpy = "^1.26.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"

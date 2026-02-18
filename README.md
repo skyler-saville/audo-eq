@@ -9,8 +9,6 @@ Audo_EQ scaffold that supports both a CLI and a FastAPI REST API while sharing o
 - **FastAPI service** (`/health`, `/master`) for HTTP-based mastering.
 - **Flask test frontend** (`audo-eq-frontend`) for manual browser-based integration checks.
 
-> Current mastering behavior is intentionally minimal: `core.master_bytes` validates inputs and returns target bytes unchanged while the DSP pipeline is still a scaffold.
-
 ## Prerequisites
 
 - Python **3.11+**
@@ -25,6 +23,10 @@ src/audo_eq/
 ├── cli.py      # Typer CLI commands
 └── core.py     # shared mastering logic
 ```
+
+## Mastering pipeline
+
+The mastering engine uses [Spotify Pedalboard](https://github.com/spotify/pedalboard) to apply a production-style chain: high-pass cleanup, tonal shaping, compression, RMS-based gain matching to the reference track, and final peak limiting.
 
 ## Setup
 
