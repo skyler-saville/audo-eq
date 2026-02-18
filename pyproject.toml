@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Audo_EQ dual-interface scaffold (CLI + FastAPI)"
 authors = ["Audo_EQ Contributors"]
 readme = "README.md"
-packages = [{ include = "audo_eq", from = "src" }]
+packages = [{ include = "audo_eq", from = "src" }, { include = "audo_eq_frontend", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -12,6 +12,8 @@ fastapi = "^0.115.0"
 typer = "^0.12.5"
 uvicorn = {version = "^0.30.6", extras = ["standard"]}
 python-multipart = "^0.0.9"
+flask = "^3.0.3"
+requests = "^2.32.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
