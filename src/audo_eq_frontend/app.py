@@ -69,6 +69,14 @@ def _api_base_url() -> str:
     return os.getenv("AUDO_EQ_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
+def _frontend_host() -> str:
+    return os.getenv("AUDO_EQ_FRONTEND_HOST", "0.0.0.0")
+
+
+def _frontend_port() -> int:
+    return int(os.getenv("AUDO_EQ_FRONTEND_PORT", "5000"))
+
+
 @app.get("/")
 def index() -> str:
     return render_template_string(INDEX_TEMPLATE)
@@ -150,5 +158,9 @@ def _content_disposition_filename(content_disposition: str | None) -> str:
     return "mastered.wav"
 
 
+def main() -> None:
+    app.run(host=_frontend_host(), port=_frontend_port(), debug=True)
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    main()
