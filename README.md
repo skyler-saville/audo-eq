@@ -108,6 +108,38 @@ curl -X POST http://127.0.0.1:8000/master \
   --output mastered.wav
 ```
 
+## Run Flask frontend for API integration testing
+
+1. Start the backend API server:
+
+   ```bash
+   poetry run uvicorn audo_eq.api:app --reload
+   ```
+
+2. Start the Flask frontend in a separate terminal:
+
+   ```bash
+   poetry run audo-eq-frontend
+   ```
+
+3. Set the frontend API base URL environment variable before starting the frontend:
+
+   ```bash
+   export AUDO_EQ_API_BASE_URL=http://127.0.0.1:8000
+   ```
+
+4. Verify the browser flow:
+
+   - Open the frontend URL shown in the terminal.
+   - Upload target and reference audio files.
+   - Submit a mastering request.
+   - Confirm the mastered file downloads and the API health status is displayed.
+
+### Troubleshooting
+
+- If the frontend shows connection errors, make sure the backend is running.
+- Verify `AUDO_EQ_API_BASE_URL` points to the correct backend host/port.
+
 ## Notes
 
 This is intentionally a minimal scaffold. `core.master_bytes` currently validates inputs and returns target bytes unchanged so both interfaces can evolve against a stable contract. Replace that function with the real DSP pipeline as implementation progresses.
