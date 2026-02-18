@@ -50,7 +50,7 @@ async def master(
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error
 
-    response = Response(content=mastered_bytes, media_type=target.content_type or "audio/wav")
+    response = Response(content=mastered_bytes, media_type="audio/wav")
 
     storage_url = store_mastered_audio(
         object_name=f"mastered/{uuid4()}.wav",
