@@ -2,11 +2,12 @@
 
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from .core import _asset_from_metadata, master_bytes
 from .ingest_validation import IngestValidationError, validate_audio_bytes
+from .processing import EqMode
 from .storage import store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
@@ -23,6 +24,7 @@ def health() -> dict[str, str]:
 async def master(
     target: UploadFile = File(..., description="Target audio file"),
     reference: UploadFile = File(..., description="Reference audio file"),
+    eq_mode: EqMode = Query(EqMode.FIXED, description="EQ strategy: fixed or reference-match."),
 ) -> Response:
     """Master target audio using a reference track and return mastered bytes."""
 
@@ -46,6 +48,7 @@ async def master(
         mastered_bytes = master_bytes(
             target_bytes=target_asset.raw_bytes,
             reference_bytes=reference_asset.raw_bytes,
+            eq_mode=eq_mode,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error

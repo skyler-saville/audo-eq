@@ -13,7 +13,7 @@ from pedalboard.io import AudioFile
 from .analysis import AnalysisPayload, analyze_tracks
 from .decision import DecisionPayload, decide_mastering
 from .ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
-from .processing import apply_processing_with_loudness_target, measure_integrated_lufs
+from .processing import EqMode, apply_processing_with_loudness_target, measure_integrated_lufs
 
 _LOUDNESS_GAIN_MIN_DB = -12.0
 _LOUDNESS_GAIN_MAX_DB = 12.0
@@ -114,6 +114,7 @@ def _run_mastering_pipeline(
     target_audio: np.ndarray,
     reference_audio: np.ndarray,
     sample_rate: int,
+    eq_mode: EqMode = EqMode.FIXED,
 ) -> MasteringResult:
     target_lufs = measure_integrated_lufs(target_audio, sample_rate)
     reference_lufs = measure_integrated_lufs(reference_audio, sample_rate)
@@ -127,11 +128,18 @@ def _run_mastering_pipeline(
         decision=decision,
         loudness_gain_db=loudness_gain_db,
         target_lufs=reference_lufs,
+        eq_mode=eq_mode,
+        eq_band_corrections=analysis.eq_band_corrections,
     )
     return MasteringResult(analysis=analysis, decision=decision, mastered_audio=mastered_audio)
 
 
-def _master_path_to_path(target_path: Path, reference_path: Path, output_path: Path) -> MasteringResult:
+def _master_path_to_path(
+    target_path: Path,
+    reference_path: Path,
+    output_path: Path,
+    eq_mode: EqMode = EqMode.FIXED,
+) -> MasteringResult:
     target_audio, sample_rate = _load_audio_file(target_path)
     reference_audio, _ = _load_audio_file(reference_path)
 
@@ -139,6 +147,7 @@ def _master_path_to_path(target_path: Path, reference_path: Path, output_path: P
         target_audio=target_audio,
         reference_audio=reference_audio,
         sample_rate=sample_rate,
+        eq_mode=eq_mode,
     )
 
     with AudioFile(str(output_path), "w", sample_rate, result.mastered_audio.shape[0]) as output_file:
@@ -147,7 +156,11 @@ def _master_path_to_path(target_path: Path, reference_path: Path, output_path: P
     return result
 
 
-def master_bytes(target_bytes: bytes, reference_bytes: bytes) -> bytes:
+def master_bytes(
+    target_bytes: bytes,
+    reference_bytes: bytes,
+    eq_mode: EqMode = EqMode.FIXED,
+) -> bytes:
     """Master target audio bytes against a reference."""
 
     if not target_bytes:
@@ -168,11 +181,16 @@ def master_bytes(target_bytes: bytes, reference_bytes: bytes) -> bytes:
         target_path.write_bytes(target_bytes)
         reference_path.write_bytes(reference_bytes)
 
-        _master_path_to_path(target_path=target_path, reference_path=reference_path, output_path=output_path)
+        _master_path_to_path(
+            target_path=target_path,
+            reference_path=reference_path,
+            output_path=output_path,
+            eq_mode=eq_mode,
+        )
         return output_path.read_bytes()
 
 
-def master_file(request: MasteringRequest) -> Path:
+def master_file(request: MasteringRequest, eq_mode: EqMode = EqMode.FIXED) -> Path:
     """Master an ingested target asset and write result to output path."""
 
     request.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,6 +208,7 @@ def master_file(request: MasteringRequest) -> Path:
             target_path=target_path,
             reference_path=reference_path,
             output_path=request.output_path,
+            eq_mode=eq_mode,
         )
 
     with AudioFile(str(request.output_path), "r") as output_audio_file:
