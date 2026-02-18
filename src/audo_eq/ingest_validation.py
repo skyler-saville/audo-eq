@@ -117,7 +117,7 @@ def _parse_metadata(raw_bytes: bytes) -> AudioMetadata:
         return _parse_wav(raw_bytes)
     if raw_bytes.startswith(b"fLaC"):
         return _parse_flac(raw_bytes)
-    if raw_bytes[:2] == b"\xFF\xFB" or raw_bytes[:2] == b"\xFF\xFA":
+    if raw_bytes.startswith(b"ID3") or raw_bytes[:1] == b"\xFF":
         return _parse_mp3(raw_bytes)
     raise IngestValidationError("unsupported_container", "Unsupported or unrecognized audio container.")
 
@@ -172,9 +172,40 @@ def _parse_flac(raw_bytes: bytes) -> AudioMetadata:
 def _parse_mp3(raw_bytes: bytes) -> AudioMetadata:
     if len(raw_bytes) < 4:
         raise IngestValidationError("corrupted_file", "Corrupted MP3 header.")
-    header = int.from_bytes(raw_bytes[:4], "big")
-    if ((header >> 21) & 0x7FF) != 0x7FF:
-        raise IngestValidationError("corrupted_file", "Corrupted MP3 frame sync.")
+
+    offset = 0
+    if raw_bytes.startswith(b"ID3"):
+        if len(raw_bytes) < 10:
+            raise IngestValidationError("corrupted_file", "Corrupted ID3v2 tag.")
+        id3_size = (
+            ((raw_bytes[6] & 0x7F) << 21)
+            | ((raw_bytes[7] & 0x7F) << 14)
+            | ((raw_bytes[8] & 0x7F) << 7)
+            | (raw_bytes[9] & 0x7F)
+        )
+        offset = 10 + id3_size
+        if raw_bytes[5] & 0x10:
+            offset += 10
+
+    search_end = min(len(raw_bytes) - 4, offset + 8192)
+    header = None
+    header_offset = offset
+    while header_offset <= search_end:
+        if raw_bytes[header_offset] == 0xFF and (raw_bytes[header_offset + 1] & 0xE0) == 0xE0:
+            candidate = int.from_bytes(raw_bytes[header_offset : header_offset + 4], "big")
+            if ((candidate >> 21) & 0x7FF) == 0x7FF:
+                version_id = (candidate >> 19) & 0x3
+                layer = (candidate >> 17) & 0x3
+                bitrate_idx = (candidate >> 12) & 0xF
+                sample_idx = (candidate >> 10) & 0x3
+                if version_id != 0x1 and layer != 0x0 and bitrate_idx not in (0, 0xF) and sample_idx != 0x3:
+                    header = candidate
+                    break
+        header_offset += 1
+
+    if header is None:
+        raise IngestValidationError("no_valid_frame", "No valid MP3 frame header found.")
+
     version_id = (header >> 19) & 0x3
     layer = (header >> 17) & 0x3
     bitrate_idx = (header >> 12) & 0xF
@@ -191,4 +222,3 @@ def _parse_mp3(raw_bytes: bytes) -> AudioMetadata:
     channels = 1 if channel_mode == 0x3 else 2
     duration_seconds = (len(raw_bytes) * 8) / (bitrate_kbps * 1000)
     return AudioMetadata("mp3", "mpeg1_layer3", duration_seconds, sample_rate, channels, len(raw_bytes))
-
