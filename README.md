@@ -129,6 +129,29 @@ This stack also starts a local MinIO server at:
 - S3 API: `http://127.0.0.1:9000`
 - MinIO Console: `http://127.0.0.1:9001`
 
+### MinIO usage and verification
+
+The Compose stack configures the API and MinIO with matching defaults so mastered files are uploaded automatically:
+
+- Access key: `minioadmin`
+- Secret key: `minioadmin`
+- Default bucket: `audo-eq-mastered`
+
+After startup, you can validate uploads end-to-end:
+
+1. Open the MinIO Console (`http://127.0.0.1:9001`) and sign in with the credentials above.
+2. Submit a `POST /master` request (see examples above).
+3. Confirm the object appears in `audo-eq-mastered`.
+
+You can also verify from the command line with the MinIO Client (`mc`) if installed locally:
+
+```bash
+mc alias set local http://127.0.0.1:9000 minioadmin minioadmin
+mc ls local/audo-eq-mastered
+```
+
+If your environment already has another S3 service on port `9000`, update `.env` (`AUDO_EQ_S3_ENDPOINT`) and the published Compose ports before startup.
+
 ### Production-style startup
 
 Start with the base and production override files:
