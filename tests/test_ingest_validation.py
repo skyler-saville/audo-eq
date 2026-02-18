@@ -55,6 +55,22 @@ def make_mp3_bytes(*, bitrate_kbps: int = 128, sample_rate: int = 44_100, second
     return frame * frame_count
 
 
+def make_id3_prefixed_mp3_bytes() -> bytes:
+    mp3_payload = make_mp3_bytes()
+    id3_payload = b"TEST" * 3
+    id3_size = len(id3_payload)
+    synchsafe_size = bytes(
+        [
+            (id3_size >> 21) & 0x7F,
+            (id3_size >> 14) & 0x7F,
+            (id3_size >> 7) & 0x7F,
+            id3_size & 0x7F,
+        ]
+    )
+    id3_header = b"ID3" + b"\x04\x00" + b"\x00" + synchsafe_size
+    return id3_header + id3_payload + mp3_payload
+
+
 def test_validate_accepts_valid_wav_mp3_flac(tmp_path: Path) -> None:
     wav = tmp_path / "valid.wav"
     mp3 = tmp_path / "valid.mp3"
@@ -124,3 +140,47 @@ def test_validate_rejects_invalid_channel_count(tmp_path: Path) -> None:
         validate_audio_file(wav, policy=policy)
 
     assert exc.value.code == "invalid_channel_count"
+
+
+def test_validate_accepts_id3_prefixed_mp3(tmp_path: Path) -> None:
+    mp3 = tmp_path / "id3_prefixed.mp3"
+    mp3.write_bytes(make_id3_prefixed_mp3_bytes())
+
+    metadata = validate_audio_file(mp3)
+
+    assert metadata.container == "mp3"
+    assert metadata.codec == "mpeg1_layer3"
+
+
+def test_validate_rejects_mp3_when_no_valid_frame_found(tmp_path: Path) -> None:
+    mp3 = tmp_path / "no_frame.mp3"
+    id3_payload = b"\x00" * 12
+    id3_size = len(id3_payload)
+    synchsafe_size = bytes(
+        [
+            (id3_size >> 21) & 0x7F,
+            (id3_size >> 14) & 0x7F,
+            (id3_size >> 7) & 0x7F,
+            id3_size & 0x7F,
+        ]
+    )
+    mp3.write_bytes(b"ID3" + b"\x04\x00" + b"\x00" + synchsafe_size + id3_payload + (b"\x00" * 64))
+
+    with pytest.raises(IngestValidationError) as exc:
+        validate_audio_file(mp3)
+
+    assert exc.value.code == "no_valid_frame"
+
+
+def test_validate_rejects_mp3_with_unsupported_codec(tmp_path: Path) -> None:
+    mp3 = tmp_path / "unsupported_codec.mp3"
+    valid = make_mp3_bytes()
+    header = int.from_bytes(valid[:4], "big")
+    unsupported_version = header & ~(0x3 << 19)
+    unsupported_version |= 0x2 << 19  # MPEG-2, not MPEG-1
+    mp3.write_bytes(unsupported_version.to_bytes(4, "big") + valid[4:])
+
+    with pytest.raises(IngestValidationError) as exc:
+        validate_audio_file(mp3)
+
+    assert exc.value.code == "unsupported_codec"
