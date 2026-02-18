@@ -13,6 +13,7 @@ from pedalboard.io import AudioFile
 from .analysis import AnalysisPayload, analyze_tracks
 from .decision import DecisionPayload, decide_mastering
 from .ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
+from .normalization import normalize_audio
 from .processing import EqMode, apply_processing_with_loudness_target, measure_integrated_lufs
 
 _LOUDNESS_GAIN_MIN_DB = -12.0
@@ -134,14 +135,13 @@ def _run_mastering_pipeline(
     return MasteringResult(analysis=analysis, decision=decision, mastered_audio=mastered_audio)
 
 
-def _master_path_to_path(
-    target_path: Path,
-    reference_path: Path,
+def _master_audio_to_path(
+    target_audio: np.ndarray,
+    reference_audio: np.ndarray,
+    sample_rate: int,
     output_path: Path,
     eq_mode: EqMode = EqMode.FIXED,
 ) -> MasteringResult:
-    target_audio, sample_rate = _load_audio_file(target_path)
-    reference_audio, _ = _load_audio_file(reference_path)
 
     result = _run_mastering_pipeline(
         target_audio=target_audio,
@@ -181,9 +181,16 @@ def master_bytes(
         target_path.write_bytes(target_bytes)
         reference_path.write_bytes(reference_bytes)
 
-        _master_path_to_path(
-            target_path=target_path,
-            reference_path=reference_path,
+        target_audio, target_sample_rate = _load_audio_file(target_path)
+        reference_audio, reference_sample_rate = _load_audio_file(reference_path)
+
+        normalized_target = normalize_audio(target_audio, target_sample_rate)
+        normalized_reference = normalize_audio(reference_audio, reference_sample_rate)
+
+        _master_audio_to_path(
+            target_audio=normalized_target.audio,
+            reference_audio=normalized_reference.audio,
+            sample_rate=normalized_target.sample_rate_hz,
             output_path=output_path,
             eq_mode=eq_mode,
         )
@@ -204,9 +211,16 @@ def master_file(request: MasteringRequest, eq_mode: EqMode = EqMode.FIXED) -> Pa
         target_path.write_bytes(request.target_asset.raw_bytes)
         reference_path.write_bytes(request.reference_asset.raw_bytes)
 
-        _master_path_to_path(
-            target_path=target_path,
-            reference_path=reference_path,
+        target_audio, target_sample_rate = _load_audio_file(target_path)
+        reference_audio, reference_sample_rate = _load_audio_file(reference_path)
+
+        normalized_target = normalize_audio(target_audio, target_sample_rate)
+        normalized_reference = normalize_audio(reference_audio, reference_sample_rate)
+
+        _master_audio_to_path(
+            target_audio=normalized_target.audio,
+            reference_audio=normalized_reference.audio,
+            sample_rate=normalized_target.sample_rate_hz,
             output_path=request.output_path,
             eq_mode=eq_mode,
         )

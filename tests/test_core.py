@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pytest
 
@@ -8,6 +9,7 @@ from audo_eq.core import (
     master_bytes,
     master_file,
 )
+from audo_eq.audio_contract import TARGET_PCM_CHANNEL_COUNT, TARGET_PCM_SAMPLE_RATE_HZ
 from audo_eq.ingest_validation import IngestValidationError
 from audo_eq.processing import measure_integrated_lufs
 from pedalboard.io import AudioFile
@@ -88,3 +90,17 @@ def test_ingest_rejects_unsupported_extension(tmp_path: Path) -> None:
         ingest_local_mastering_request(target, reference, tmp_path / "mastered.wav")
 
     assert exc.value.code == "unsupported_container"
+
+
+def test_master_bytes_normalizes_sample_rate_and_channels() -> None:
+    target_bytes = make_wav_bytes(duration_seconds=0.2, sample_rate=44_100, channels=1, amplitude=8_000)
+    reference_bytes = make_wav_bytes(duration_seconds=0.2, sample_rate=32_000, channels=1, amplitude=12_000)
+
+    mastered_bytes = master_bytes(target_bytes, reference_bytes)
+
+    with NamedTemporaryFile(suffix=".wav") as output_file:
+        output_path = Path(output_file.name)
+        output_path.write_bytes(mastered_bytes)
+        with AudioFile(str(output_path), "r") as mastered_file:
+            assert mastered_file.samplerate == TARGET_PCM_SAMPLE_RATE_HZ
+            assert mastered_file.num_channels == TARGET_PCM_CHANNEL_COUNT
