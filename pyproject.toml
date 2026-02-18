@@ -17,6 +17,7 @@ requests = "^2.32.3"
 minio = "^7.2.15"
 pedalboard = "^0.9.16"
 numpy = "^1.26.4"
+pyloudnorm = "^0.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"

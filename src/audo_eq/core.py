@@ -13,7 +13,16 @@ from pedalboard.io import AudioFile
 from .analysis import AnalysisPayload, analyze_tracks
 from .decision import DecisionPayload, decide_mastering
 from .ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
-from .processing import apply_processing
+from .processing import apply_processing_with_loudness_target, measure_integrated_lufs
+
+_LOUDNESS_GAIN_MIN_DB = -12.0
+_LOUDNESS_GAIN_MAX_DB = 12.0
+
+
+def _compute_loudness_gain_delta_db(target_lufs: float, reference_lufs: float) -> float:
+    """Compute a safe loudness gain delta from LUFS difference."""
+
+    return float(np.clip(reference_lufs - target_lufs, _LOUDNESS_GAIN_MIN_DB, _LOUDNESS_GAIN_MAX_DB))
 
 
 class ValidationStatus(str, Enum):
@@ -78,7 +87,10 @@ def _asset_from_metadata(source_uri: str, raw_bytes: bytes, metadata: AudioMetad
 def _validated_asset_from_path(path: Path) -> AudioAsset:
     metadata = validate_audio_file(path)
     raw_bytes = path.read_bytes()
-    return _asset_from_metadata(path.resolve().as_uri(), raw_bytes, metadata)
+    asset = _asset_from_metadata(path.resolve().as_uri(), raw_bytes, metadata)
+    audio, sample_rate = _load_audio_file(path)
+    asset.integrated_lufs = measure_integrated_lufs(audio, sample_rate)
+    return asset
 
 
 def ingest_local_mastering_request(
@@ -103,9 +115,19 @@ def _run_mastering_pipeline(
     reference_audio: np.ndarray,
     sample_rate: int,
 ) -> MasteringResult:
+    target_lufs = measure_integrated_lufs(target_audio, sample_rate)
+    reference_lufs = measure_integrated_lufs(reference_audio, sample_rate)
+    loudness_gain_db = _compute_loudness_gain_delta_db(target_lufs, reference_lufs)
+
     analysis = analyze_tracks(target_audio=target_audio, reference_audio=reference_audio, sample_rate=sample_rate)
     decision = decide_mastering(analysis)
-    mastered_audio = apply_processing(target_audio=target_audio, sample_rate=sample_rate, decision=decision)
+    mastered_audio = apply_processing_with_loudness_target(
+        target_audio=target_audio,
+        sample_rate=sample_rate,
+        decision=decision,
+        loudness_gain_db=loudness_gain_db,
+        target_lufs=reference_lufs,
+    )
     return MasteringResult(analysis=analysis, decision=decision, mastered_audio=mastered_audio)
 
 
@@ -169,5 +191,9 @@ def master_file(request: MasteringRequest) -> Path:
             reference_path=reference_path,
             output_path=request.output_path,
         )
+
+    with AudioFile(str(request.output_path), "r") as output_audio_file:
+        output_audio = output_audio_file.read(output_audio_file.frames)
+        request.target_asset.integrated_lufs = measure_integrated_lufs(output_audio, output_audio_file.samplerate)
 
     return request.output_path
