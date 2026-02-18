@@ -94,8 +94,10 @@ curl -X POST http://127.0.0.1:8000/master \
 | `API_HOST` | `0.0.0.0` | Host interface bound by the API process inside the container. `0.0.0.0` is a safe default so the service is reachable from Docker networking. |
 | `API_PORT` | `8000` | Port published by Compose (`host:container`) and used by app config. `8000` is a common local dev default. |
 | `UVICORN_WORKERS` | `1` | Number of Uvicorn worker processes used by the production-style Compose profile. `1` is safe and lightweight for local/small environments. |
+| `UVICORN_LOG_LEVEL` | `info` | Shared Uvicorn log level applied by both development and production Compose overrides. |
 | `COMPOSE_PROJECT_NAME` (optional) | unset | Optional Compose project prefix for container/network names to avoid collisions across multiple stacks. |
 | `COMPOSE_PROFILES` (optional) | unset | Optional Compose profiles selector if you add profile-gated services later. |
+| `COMPOSE_FILE` (optional) | `compose.yaml:compose.override.yaml` | Cascading Compose file list. Set this in `.env` if you want `docker compose up` to automatically apply a specific override stack. |
 
 > `.env` is local-only configuration and should remain uncommitted. The repo ignores it via `.gitignore`.
 
@@ -109,12 +111,24 @@ Start with the base and development override files:
 docker compose -f compose.yaml -f compose.override.yaml up --build
 ```
 
+Or configure cascading defaults in `.env` and run a shorter command:
+
+```bash
+COMPOSE_FILE=compose.yaml:compose.override.yaml docker compose up --build
+```
+
 ### Production-style startup
 
 Start with the base and production override files:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+```
+
+Or override `COMPOSE_FILE` for a production-style cascade:
+
+```bash
+COMPOSE_FILE=compose.yaml:compose.prod.yaml docker compose up -d --build
 ```
 
 Stop and remove services when done:

@@ -5,11 +5,13 @@ services:
       - uvicorn
       - audo_eq.api:app
       - --host
-      - 0.0.0.0
+      - ${API_HOST:-0.0.0.0}
       - --port
-      - "8000"
+      - "${API_PORT:-8000}"
       - --workers
       - "${UVICORN_WORKERS:-1}"
+      - --log-level
+      - "${UVICORN_LOG_LEVEL:-info}"
     restart: unless-stopped
     logging:
       driver: json-file
