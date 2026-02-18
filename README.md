@@ -2,6 +2,21 @@
 
 Audo_EQ scaffold that supports both a CLI and a FastAPI REST API while sharing one core mastering service layer.
 
+## What this project includes
+
+- **Shared mastering core** (`audo_eq.core`) used by all interfaces.
+- **CLI workflow** (`audo-eq master`) for local file-based mastering.
+- **FastAPI service** (`/health`, `/master`) for HTTP-based mastering.
+- **Flask test frontend** (`audo-eq-frontend`) for manual browser-based integration checks.
+
+> Current mastering behavior is intentionally minimal: `core.master_bytes` validates inputs and returns target bytes unchanged while the DSP pipeline is still a scaffold.
+
+## Prerequisites
+
+- Python **3.11+**
+- [Poetry](https://python-poetry.org/)
+- Optional: Docker + Docker Compose for containerized runs
+
 ## Project layout
 
 ```text
@@ -15,6 +30,41 @@ src/audo_eq/
 
 ```bash
 poetry install
+```
+
+Run tests:
+
+```bash
+poetry run pytest
+```
+
+## Quick start (local)
+
+### 1) Start the API
+
+```bash
+poetry run uvicorn audo_eq.api:app --reload
+```
+
+### 2) Check health
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+### 3) Submit a mastering job
+
+```bash
+curl -X POST http://127.0.0.1:8000/master \
+  -F "target=@./target.wav" \
+  -F "reference=@./reference.wav" \
+  --output mastered.wav
 ```
 
 ## Environment configuration for Docker Compose
@@ -86,6 +136,8 @@ poetry run audo-eq master \
   --output ./mastered.wav
 ```
 
+The command validates both input files and writes the mastered output to the requested path (creating parent directories if needed).
+
 ## Run as REST API (FastAPI)
 
 ```bash
@@ -108,6 +160,14 @@ curl -X POST http://127.0.0.1:8000/master \
   --output mastered.wav
 ```
 
+### API behavior notes
+
+- `POST /master` returns binary audio bytes with `audio/*` content type.
+- Invalid uploads return structured JSON errors in `detail`.
+- Status codes:
+  - `400` for invalid payloads (e.g., empty bytes, malformed request)
+  - `415` for unsupported audio container/codec
+
 ## Run Flask frontend for API integration testing
 
 1. Start the backend API server:
@@ -128,6 +188,13 @@ curl -X POST http://127.0.0.1:8000/master \
    export AUDO_EQ_API_BASE_URL=http://127.0.0.1:8000
    ```
 
+   Optional frontend bind settings:
+
+   ```bash
+   export AUDO_EQ_FRONTEND_HOST=0.0.0.0
+   export AUDO_EQ_FRONTEND_PORT=5000
+   ```
+
 4. Verify the browser flow:
 
    - Open the frontend URL shown in the terminal.
@@ -139,7 +206,11 @@ curl -X POST http://127.0.0.1:8000/master \
 
 - If the frontend shows connection errors, make sure the backend is running.
 - Verify `AUDO_EQ_API_BASE_URL` points to the correct backend host/port.
+- If `POST /master` returns `415`, verify files are supported audio formats/codecs.
+- If CLI/API fail immediately, confirm dependencies were installed with `poetry install`.
 
-## Notes
+## Development notes
 
-This is intentionally a minimal scaffold. `core.master_bytes` currently validates inputs and returns target bytes unchanged so both interfaces can evolve against a stable contract. Replace that function with the real DSP pipeline as implementation progresses.
+- Keep orchestration and transport logic in CLI/API layers.
+- Keep mastering behavior in `audo_eq.core` so both interfaces stay consistent.
+- Replace `core.master_bytes` with the real DSP pipeline as implementation progresses.
