@@ -28,6 +28,8 @@ src/audo_eq/
 
 The mastering engine uses [Spotify Pedalboard](https://github.com/spotify/pedalboard) to apply a production-style chain: high-pass cleanup, tonal shaping, compression, RMS-based gain matching to the reference track, and final peak limiting.
 
+For a detailed stage-by-stage walkthrough (ingest, analysis, decisioning, loudness targeting, EQ modes, and troubleshooting), see **[docs/mastering-pipeline.md](docs/mastering-pipeline.md)**.
+
 ## Setup
 
 ```bash
