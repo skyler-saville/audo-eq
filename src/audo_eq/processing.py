@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 import numpy as np
@@ -29,6 +30,41 @@ class EqMode(str, Enum):
     REFERENCE_MATCH = "reference-match"
 
 
+class EqPreset(str, Enum):
+    """Available EQ tonal presets."""
+
+    NEUTRAL = "neutral"
+    WARM = "warm"
+    BRIGHT = "bright"
+    VOCAL_PRESENCE = "vocal-presence"
+    BASS_BOOST = "bass-boost"
+
+
+@dataclass(frozen=True, slots=True)
+class EqPresetTuning:
+    """Deterministic per-preset tuning offsets."""
+
+    low_shelf_offset_db: float = 0.0
+    high_shelf_offset_db: float = 0.0
+    low_band_bias_db: float = 0.0
+    mid_band_bias_db: float = 0.0
+    high_band_bias_db: float = 0.0
+
+
+EQ_PRESET_TUNINGS: dict[EqPreset, EqPresetTuning] = {
+    EqPreset.NEUTRAL: EqPresetTuning(),
+    EqPreset.WARM: EqPresetTuning(low_shelf_offset_db=1.5, high_shelf_offset_db=-0.8, low_band_bias_db=0.5),
+    EqPreset.BRIGHT: EqPresetTuning(low_shelf_offset_db=-0.8, high_shelf_offset_db=1.8, high_band_bias_db=0.4),
+    EqPreset.VOCAL_PRESENCE: EqPresetTuning(
+        low_shelf_offset_db=-0.6,
+        high_shelf_offset_db=1.2,
+        mid_band_bias_db=0.8,
+        high_band_bias_db=0.2,
+    ),
+    EqPreset.BASS_BOOST: EqPresetTuning(low_shelf_offset_db=2.0, high_shelf_offset_db=-0.5, low_band_bias_db=0.8),
+}
+
+
 def _audio_for_loudness_measurement(audio: np.ndarray) -> np.ndarray:
     """Convert channel-first pedalboard arrays for pyloudnorm."""
 
@@ -47,13 +83,24 @@ def measure_integrated_lufs(audio: np.ndarray, sample_rate: int) -> float:
     return measured
 
 
-def _build_reference_match_eq_stage(eq_band_corrections: tuple[EqBandCorrection, ...]) -> list:
+def _band_bias_for_frequency(center_hz: float, tuning: EqPresetTuning) -> float:
+    if center_hz <= 250.0:
+        return tuning.low_band_bias_db
+    if center_hz >= 4_000.0:
+        return tuning.high_band_bias_db
+    return tuning.mid_band_bias_db
+
+
+def _build_reference_match_eq_stage(
+    eq_band_corrections: tuple[EqBandCorrection, ...],
+    tuning: EqPresetTuning,
+) -> list:
     """Map per-band dB deltas into a compact Pedalboard filter bank."""
 
     plugins: list = []
     for correction in eq_band_corrections:
         center_hz = correction.center_hz
-        gain_db = float(correction.delta_db)
+        gain_db = float(correction.delta_db) + _band_bias_for_frequency(center_hz, tuning)
         if center_hz <= 250.0:
             plugins.append(LowShelfFilter(cutoff_frequency_hz=max(40.0, center_hz), gain_db=gain_db))
             continue
@@ -72,18 +119,24 @@ def _build_reference_match_eq_stage(eq_band_corrections: tuple[EqBandCorrection,
 def build_dsp_chain(
     decision: DecisionPayload,
     eq_mode: EqMode = EqMode.FIXED,
+    eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
 ) -> Pedalboard:
     """Build the mastering DSP chain from the decision payload."""
 
+    tuning = EQ_PRESET_TUNINGS[eq_preset]
+
     plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db),
-        HighShelfFilter(cutoff_frequency_hz=6_000.0, gain_db=decision.high_shelf_gain_db),
+        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db + tuning.low_shelf_offset_db),
+        HighShelfFilter(
+            cutoff_frequency_hz=6_000.0,
+            gain_db=decision.high_shelf_gain_db + tuning.high_shelf_offset_db,
+        ),
     ]
 
     if eq_mode is EqMode.REFERENCE_MATCH:
-        plugins.extend(_build_reference_match_eq_stage(eq_band_corrections))
+        plugins.extend(_build_reference_match_eq_stage(eq_band_corrections, tuning=tuning))
 
     plugins.extend(
         [
@@ -106,11 +159,17 @@ def apply_processing(
     sample_rate: int,
     decision: DecisionPayload,
     eq_mode: EqMode = EqMode.FIXED,
+    eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
 ) -> np.ndarray:
     """Apply the constructed DSP chain to target audio."""
 
-    board = build_dsp_chain(decision, eq_mode=eq_mode, eq_band_corrections=eq_band_corrections)
+    board = build_dsp_chain(
+        decision,
+        eq_mode=eq_mode,
+        eq_preset=eq_preset,
+        eq_band_corrections=eq_band_corrections,
+    )
     return board(target_audio, sample_rate)
 
 
@@ -121,17 +180,23 @@ def apply_processing_with_loudness_target(
     loudness_gain_db: float,
     target_lufs: float,
     eq_mode: EqMode = EqMode.FIXED,
+    eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
 ) -> np.ndarray:
     """Apply mastering chain with loudness targeting around the final limiter."""
 
+    tuning = EQ_PRESET_TUNINGS[eq_preset]
+
     pre_limiter_plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db),
-        HighShelfFilter(cutoff_frequency_hz=6_000.0, gain_db=decision.high_shelf_gain_db),
+        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db + tuning.low_shelf_offset_db),
+        HighShelfFilter(
+            cutoff_frequency_hz=6_000.0,
+            gain_db=decision.high_shelf_gain_db + tuning.high_shelf_offset_db,
+        ),
     ]
     if eq_mode is EqMode.REFERENCE_MATCH:
-        pre_limiter_plugins.extend(_build_reference_match_eq_stage(eq_band_corrections))
+        pre_limiter_plugins.extend(_build_reference_match_eq_stage(eq_band_corrections, tuning=tuning))
 
     pre_limiter_plugins.extend(
         [
