@@ -8,17 +8,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import numpy as np
-from pedalboard import (
-    Compressor,
-    Gain,
-    HighpassFilter,
-    Limiter,
-    LowShelfFilter,
-    Pedalboard,
-)
 from pedalboard.io import AudioFile
 
-from .ingest_validation import AudioMetadata, validate_audio_file
+from .analysis import AnalysisPayload, analyze_tracks
+from .decision import DecisionPayload, decide_mastering
+from .ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
+from .processing import apply_processing
 
 
 class ValidationStatus(str, Enum):
@@ -55,6 +50,15 @@ class MasteringRequest:
     output_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class MasteringResult:
+    """Structured pipeline payloads produced during mastering."""
+
+    analysis: AnalysisPayload
+    decision: DecisionPayload
+    mastered_audio: np.ndarray
+
+
 def _asset_from_metadata(source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
     return AudioAsset(
         source_uri=source_uri,
@@ -89,54 +93,36 @@ def ingest_local_mastering_request(
     )
 
 
-def _rms_db(audio: np.ndarray) -> float:
-    if audio.size == 0:
-        return -96.0
-    rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
-    if rms <= 0:
-        return -96.0
-    return 20.0 * np.log10(rms)
-
-
-def _build_mastering_board(target_audio: np.ndarray, reference_audio: np.ndarray) -> Pedalboard:
-    target_rms_db = _rms_db(target_audio)
-    reference_rms_db = _rms_db(reference_audio)
-
-    gain_to_reference_db = float(np.clip(reference_rms_db - target_rms_db, -8.0, 8.0))
-
-    return Pedalboard(
-        [
-            HighpassFilter(cutoff_frequency_hz=30.0),
-            LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=0.75),
-            Compressor(threshold_db=-22.0, ratio=2.5, attack_ms=15.0, release_ms=120.0),
-            Gain(gain_db=gain_to_reference_db),
-            Limiter(threshold_db=-0.9, release_ms=150.0),
-        ]
-    )
-
-
-def _master_audio(target_audio: np.ndarray, reference_audio: np.ndarray, sample_rate: int) -> np.ndarray:
-    board = _build_mastering_board(target_audio=target_audio, reference_audio=reference_audio)
-    return board(target_audio, sample_rate)
-
-
 def _load_audio_file(path: Path) -> tuple[np.ndarray, int]:
     with AudioFile(str(path), "r") as audio_file:
         return audio_file.read(audio_file.frames), audio_file.samplerate
 
 
-def _master_path_to_path(target_path: Path, reference_path: Path, output_path: Path) -> None:
+def _run_mastering_pipeline(
+    target_audio: np.ndarray,
+    reference_audio: np.ndarray,
+    sample_rate: int,
+) -> MasteringResult:
+    analysis = analyze_tracks(target_audio=target_audio, reference_audio=reference_audio, sample_rate=sample_rate)
+    decision = decide_mastering(analysis)
+    mastered_audio = apply_processing(target_audio=target_audio, sample_rate=sample_rate, decision=decision)
+    return MasteringResult(analysis=analysis, decision=decision, mastered_audio=mastered_audio)
+
+
+def _master_path_to_path(target_path: Path, reference_path: Path, output_path: Path) -> MasteringResult:
     target_audio, sample_rate = _load_audio_file(target_path)
     reference_audio, _ = _load_audio_file(reference_path)
 
-    mastered_audio = _master_audio(
+    result = _run_mastering_pipeline(
         target_audio=target_audio,
         reference_audio=reference_audio,
         sample_rate=sample_rate,
     )
 
-    with AudioFile(str(output_path), "w", sample_rate, mastered_audio.shape[0]) as output_file:
-        output_file.write(mastered_audio)
+    with AudioFile(str(output_path), "w", sample_rate, result.mastered_audio.shape[0]) as output_file:
+        output_file.write(result.mastered_audio)
+
+    return result
 
 
 def master_bytes(target_bytes: bytes, reference_bytes: bytes) -> bytes:
@@ -146,6 +132,9 @@ def master_bytes(target_bytes: bytes, reference_bytes: bytes) -> bytes:
         raise ValueError("Target audio is empty.")
     if not reference_bytes:
         raise ValueError("Reference audio is empty.")
+
+    validate_audio_bytes(target_bytes, filename="target.wav")
+    validate_audio_bytes(reference_bytes, filename="reference.wav")
 
     with NamedTemporaryFile(suffix=".wav") as target_file, NamedTemporaryFile(
         suffix=".wav"
