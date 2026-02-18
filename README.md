@@ -32,6 +32,16 @@ src/audo_eq/
 poetry install
 ```
 
+Or bootstrap common workflows with `make`:
+
+```bash
+make ensure-env  # creates .env from .env.example when needed
+make install
+make test
+```
+
+Run `make help` to view all local development shortcuts (API, frontend, Compose dev/prod flows, and health checks). The Makefile automatically loads values from `.env` when present.
+
 Run tests:
 
 ```bash
