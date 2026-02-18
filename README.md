@@ -95,6 +95,13 @@ curl -X POST http://127.0.0.1:8000/master \
 | `API_PORT` | `8000` | Port published by Compose (`host:container`) and used by app config. `8000` is a common local dev default. |
 | `UVICORN_WORKERS` | `1` | Number of Uvicorn worker processes used by the production-style Compose profile. `1` is safe and lightweight for local/small environments. |
 | `UVICORN_LOG_LEVEL` | `info` | Shared Uvicorn log level applied by both development and production Compose overrides. |
+| `AUDO_EQ_STORAGE_ENABLED` | `true` | Enables automatic upload of mastered files to S3-compatible object storage after `/master` requests. |
+| `AUDO_EQ_S3_ENDPOINT` | `minio:9000` | S3-compatible API endpoint used by the MinIO client (`host:port`). |
+| `AUDO_EQ_S3_ACCESS_KEY` | `minioadmin` | Access key for object storage authentication. |
+| `AUDO_EQ_S3_SECRET_KEY` | `minioadmin` | Secret key for object storage authentication. |
+| `AUDO_EQ_S3_BUCKET` | `audo-eq-mastered` | Bucket where mastered artifacts are written. Buckets are created automatically if missing. |
+| `AUDO_EQ_S3_SECURE` | `false` | Uses HTTPS when `true`; keep `false` for local MinIO over plain HTTP. |
+| `AUDO_EQ_S3_REGION` (optional) | unset | Optional region value passed to the S3-compatible client. |
 | `COMPOSE_PROJECT_NAME` (optional) | unset | Optional Compose project prefix for container/network names to avoid collisions across multiple stacks. |
 | `COMPOSE_PROFILES` (optional) | unset | Optional Compose profiles selector if you add profile-gated services later. |
 | `COMPOSE_FILE` (optional) | `compose.yaml:compose.override.yaml` | Cascading Compose file list. Set this in `.env` if you want `docker compose up` to automatically apply a specific override stack. |
@@ -116,6 +123,11 @@ Or configure cascading defaults in `.env` and run a shorter command:
 ```bash
 COMPOSE_FILE=compose.yaml:compose.override.yaml docker compose up --build
 ```
+
+This stack also starts a local MinIO server at:
+
+- S3 API: `http://127.0.0.1:9000`
+- MinIO Console: `http://127.0.0.1:9001`
 
 ### Production-style startup
 
@@ -187,6 +199,7 @@ curl -X POST http://127.0.0.1:8000/master \
 ### API behavior notes
 
 - `POST /master` returns binary audio bytes with `audio/*` content type.
+- When storage is enabled, `POST /master` also uploads mastered output to object storage and includes a temporary download URL in the `X-Mastered-Object-Url` response header.
 - Invalid uploads return structured JSON errors in `detail`.
 - Status codes:
   - `400` for invalid payloads (e.g., empty bytes, malformed request)
