@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from audo_eq import storage
 
 
@@ -65,10 +63,9 @@ def test_store_mastered_audio_non_strict_returns_none_on_storage_error(monkeypat
     assert storage.store_mastered_audio(object_name="mastered/file.wav", audio_bytes=b"abc") is None
 
 
-def test_store_mastered_audio_strict_raises_on_storage_error(monkeypatch) -> None:
+def test_store_mastered_audio_returns_none_on_storage_error(monkeypatch) -> None:
     _reset_caches()
     monkeypatch.setenv("AUDO_EQ_STORAGE_ENABLED", "true")
-    monkeypatch.setenv("AUDO_EQ_STORAGE_STRICT", "true")
 
     class _FailingClient(_FakeMinioClient):
         def put_object(self, bucket_name: str, object_name: str, data, length: int, content_type: str) -> None:
@@ -76,5 +73,4 @@ def test_store_mastered_audio_strict_raises_on_storage_error(monkeypatch) -> Non
 
     monkeypatch.setattr(storage, "get_storage_client", lambda: _FailingClient())
 
-    with pytest.raises(storage.StorageWriteError):
-        storage.store_mastered_audio(object_name="mastered/file.wav", audio_bytes=b"abc")
+    assert storage.store_mastered_audio(object_name="mastered/file.wav", audio_bytes=b"abc") is None

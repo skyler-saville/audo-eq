@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import lru_cache
@@ -21,7 +21,6 @@ class StorageConfig:
     """Runtime configuration for S3-compatible object storage."""
 
     enabled: bool
-    strict: bool
     endpoint: str
     access_key: str
     secret_key: str
@@ -36,7 +35,6 @@ def load_storage_config() -> StorageConfig:
 
     return StorageConfig(
         enabled=os.getenv("AUDO_EQ_STORAGE_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
-        strict=os.getenv("AUDO_EQ_STORAGE_STRICT", "false").lower() in {"1", "true", "yes", "on"},
         endpoint=os.getenv("AUDO_EQ_S3_ENDPOINT", "minio:9000"),
         access_key=os.getenv("AUDO_EQ_S3_ACCESS_KEY", "minioadmin"),
         secret_key=os.getenv("AUDO_EQ_S3_SECRET_KEY", "minioadmin"),
@@ -47,7 +45,7 @@ def load_storage_config() -> StorageConfig:
 
 
 class StorageWriteError(RuntimeError):
-    """Raised when mastered audio cannot be persisted in strict mode."""
+    """Backward-compatible storage write exception type."""
 
 
 @lru_cache(maxsize=1)
@@ -91,11 +89,8 @@ def store_mastered_audio(*, object_name: str, audio_bytes: bytes, content_type: 
             object_name=object_name,
             expires=timedelta(hours=1),
         )
-    except Exception as error:
-        if config.strict:
-            raise StorageWriteError("failed to store mastered audio") from error
-
-        logger.warning("Mastered audio storage failed; returning response without object URL.", exc_info=error)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Mastered audio storage failed; returning no URL.", exc_info=error)
         return None
 
 

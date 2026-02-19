@@ -1,20 +1,45 @@
 """FastAPI interface for Audo_EQ."""
 
+import os
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from .domain.policies import DEFAULT_INGEST_POLICY, DEFAULT_MASTERING_PROFILE, DEFAULT_NORMALIZATION_POLICY
+from .application.artifact_persistence_service import PersistMasteredArtifact
+from .application.mastered_artifact_repository import (
+    ArtifactPersistenceError,
+    PersistenceGuarantee,
+    PersistenceMode,
+    PersistencePolicy,
+)
 from .interfaces.api_handlers import IngestValidationError, build_asset, master_uploaded_bytes
 from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
 from .domain.events import ArtifactStored
-from .infrastructure.minio_storage import StorageWriteError, store_mastered_audio
+from .infrastructure.mastered_artifact_repositories import (
+    DeferredMasteredArtifactRepository,
+    MinIOMasteredArtifactRepository,
+)
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
 
 # Compatibility alias used by tests and legacy patch points.
 master_bytes = master_uploaded_bytes
+
+
+def _build_repository_for_mode(mode: PersistenceMode):
+    if mode is PersistenceMode.DEFERRED:
+        return DeferredMasteredArtifactRepository()
+    return MinIOMasteredArtifactRepository()
+
+
+def _resolve_persistence_policy() -> PersistencePolicy:
+    mode = PersistenceMode(os.getenv("AUDO_EQ_ARTIFACT_PERSISTENCE_MODE", PersistenceMode.IMMEDIATE.value))
+    guarantee = PersistenceGuarantee(
+        os.getenv("AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE", PersistenceGuarantee.BEST_EFFORT.value)
+    )
+    return PersistencePolicy(mode=mode, guarantee=guarantee)
 
 
 @app.get("/health")
@@ -93,26 +118,36 @@ async def master(
     response.headers["X-Normalization-Policy-Id"] = DEFAULT_NORMALIZATION_POLICY.policy_id
     response.headers["X-Mastering-Profile-Id"] = DEFAULT_MASTERING_PROFILE.profile_id
 
+    object_name = f"mastered/{uuid4()}.wav"
+    persistence_policy = _resolve_persistence_policy()
+    repository = _build_repository_for_mode(persistence_policy.mode)
+    persistence_service = PersistMasteredArtifact(repository=repository)
+
     try:
-        storage_url = store_mastered_audio(
-            object_name=f"mastered/{uuid4()}.wav",
+        persistence_result = persistence_service.run(
+            object_name=object_name,
             audio_bytes=mastered_bytes,
             content_type=target.content_type or "audio/wav",
+            policy=persistence_policy,
         )
-    except StorageWriteError as error:
+    except ArtifactPersistenceError as error:
         raise HTTPException(
             status_code=503,
             detail={"code": "storage_unavailable", "message": "failed to persist mastered audio"},
         ) from error
 
-    if storage_url:
-        response.headers["X-Mastered-Object-Url"] = storage_url
+    if persistence_result.object_url:
+        response.headers["X-Mastered-Object-Url"] = persistence_result.object_url
+
+    response.headers["X-Artifact-Persistence-Status"] = persistence_result.status
+
+    if persistence_result.destination:
         from .interfaces.api_handlers import _event_publisher
 
         _event_publisher.publish(
             ArtifactStored(
                 correlation_id=correlation_id,
-                payload_summary={"destination": storage_url, "storage_kind": "object_store"},
+                payload_summary={"destination": persistence_result.destination, "storage_kind": persistence_result.status},
             )
         )
 

@@ -125,7 +125,7 @@ This gives practical loudness alignment while reducing over-correction artifacts
 Depending on entrypoint:
 
 - **CLI** writes mastered audio to your requested output path.
-- **API** returns mastered bytes and may also upload to object storage (if enabled), exposing a temporary URL header.
+- **API** returns mastered bytes immediately and applies persistence policy afterward (immediate object-store write or deferred queue handoff).
 
 After file mastering, the target asset metadata is updated with measured integrated LUFS from the produced output.
 
@@ -145,7 +145,8 @@ After file mastering, the target asset metadata is updated with measured integra
 - Accepts multipart `target` and `reference` uploads.
 - Returns binary mastered audio.
 - Uses structured error responses for invalid payloads.
-- Can upload artifacts to S3-compatible storage and return a response header URL.
+- Persists artifacts via a repository port using policy-driven semantics (`immediate` vs `deferred`, `best-effort` vs `guaranteed`).
+- Exposes `X-Artifact-Persistence-Status` (`stored`, `deferred`, `skipped`) and optionally `X-Mastered-Object-Url` when immediate upload succeeds.
 
 ---
 

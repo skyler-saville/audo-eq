@@ -108,6 +108,8 @@ curl -X POST http://127.0.0.1:8000/master \
 | `MINIO_API_PORT` | `9000` | Host port published for MinIO's S3 API (`container:9000`). Change this to avoid local collisions with other S3-compatible stacks. |
 | `MINIO_CONSOLE_PORT` | `9001` | Host port published for MinIO Console UI (`container:9001`). Change this to avoid local collisions. |
 | `AUDO_EQ_S3_REGION` (optional) | unset | Optional region value passed to the S3-compatible client. |
+| `AUDO_EQ_ARTIFACT_PERSISTENCE_MODE` | `immediate` | Application persistence mode: `immediate` (write now) or `deferred` (queue handoff, return audio bytes immediately). |
+| `AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE` | `best-effort` | Application guarantee policy: `best-effort` tolerates persistence misses; `guaranteed` requires successful persistence semantics for the selected mode. |
 | `COMPOSE_PROJECT_NAME` (optional) | unset | Optional Compose project prefix for container/network names to avoid collisions across multiple stacks. |
 | `COMPOSE_PROFILES` (optional) | unset | Optional Compose profiles selector if you add profile-gated services later. |
 | `COMPOSE_FILE` (optional) | `compose.yaml:compose.override.yaml` | Cascading Compose file list. Set this in `.env` if you want `docker compose up` to automatically apply a specific override stack. |
@@ -230,7 +232,11 @@ curl -X POST http://127.0.0.1:8000/master \
 ### API behavior notes
 
 - `POST /master` returns binary audio bytes with `audio/*` content type.
-- When storage is enabled, `POST /master` also uploads mastered output to object storage and includes a temporary download URL in the `X-Mastered-Object-Url` response header.
+- `POST /master` always returns mastered bytes immediately when mastering succeeds.
+- Artifact persistence is policy-driven via `AUDO_EQ_ARTIFACT_PERSISTENCE_MODE` and `AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE`.
+- In `immediate` mode, `X-Mastered-Object-Url` is present only when object storage write succeeds.
+- `X-Artifact-Persistence-Status` reports persistence outcome (`stored`, `deferred`, or `skipped`).
+- Guaranteed persistence (`..._GUARANTEE=guaranteed`) returns `503` if the selected mode cannot satisfy its durability handoff semantics.
 - Invalid uploads return structured JSON errors in `detail`.
 - Status codes:
   - `400` for invalid payloads (e.g., empty bytes, malformed request)
