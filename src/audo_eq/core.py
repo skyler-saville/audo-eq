@@ -31,8 +31,18 @@ def _validated_asset_from_path(path: Path) -> AudioAsset:
     return _validate_ingest.validated_asset_from_path(path)
 
 
-def ingest_local_mastering_request(target_path: Path, reference_path: Path, output_path: Path) -> MasteringRequest:
-    return _validate_ingest.ingest_local_mastering_request(target_path, reference_path, output_path)
+def ingest_local_mastering_request(
+    target_path: Path,
+    reference_path: Path,
+    output_path: Path,
+    correlation_id: str | None = None,
+) -> MasteringRequest:
+    return _validate_ingest.ingest_local_mastering_request(
+        target_path,
+        reference_path,
+        output_path,
+        correlation_id=correlation_id,
+    )
 
 
 def _load_audio_file(path: Path) -> tuple[np.ndarray, int]:
@@ -72,15 +82,23 @@ def _master_audio_to_path(
 def master_bytes(
     target_bytes: bytes,
     reference_bytes: bytes,
+    correlation_id: str | None = None,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
 ) -> bytes:
-    return _mastering_service.master_bytes(target_bytes, reference_bytes, eq_mode=eq_mode, eq_preset=eq_preset)
+    return _mastering_service.master_bytes(
+        target_bytes,
+        reference_bytes,
+        correlation_id=correlation_id,
+        eq_mode=eq_mode,
+        eq_preset=eq_preset,
+    )
 
 
 def master_file(
     request: MasteringRequest,
+    correlation_id: str | None = None,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
 ) -> Path:
-    return _mastering_service.master_file(request, eq_mode=eq_mode, eq_preset=eq_preset)
+    return _mastering_service.master_file(request, correlation_id=correlation_id, eq_mode=eq_mode, eq_preset=eq_preset)

@@ -47,7 +47,7 @@ def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> N
 def test_master_forwards_eq_mode(monkeypatch) -> None:
     captured = {}
 
-    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset):
+    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset, correlation_id):
         captured["eq_mode"] = eq_mode
         captured["eq_preset"] = eq_preset
         return make_wav_bytes()
@@ -71,7 +71,7 @@ def test_master_forwards_eq_mode(monkeypatch) -> None:
 def test_master_parses_query_options_case_insensitively(monkeypatch) -> None:
     captured = {}
 
-    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset):
+    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset, correlation_id):
         captured["eq_mode"] = eq_mode
         captured["eq_preset"] = eq_preset
         return make_wav_bytes()

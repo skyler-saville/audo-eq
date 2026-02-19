@@ -2,12 +2,13 @@
 
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from .domain.policies import DEFAULT_INGEST_POLICY, DEFAULT_MASTERING_PROFILE, DEFAULT_NORMALIZATION_POLICY
 from .interfaces.api_handlers import IngestValidationError, build_asset, master_uploaded_bytes
 from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
+from .domain.events import ArtifactStored
 from .infrastructure.minio_storage import StorageWriteError, store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
@@ -29,6 +30,7 @@ async def master(
     reference: UploadFile = File(..., description="Reference audio file"),
     eq_mode: str = Query(EqMode.FIXED.value, description="EQ strategy: fixed or reference-match."),
     eq_preset: str = Query(EqPreset.NEUTRAL.value, description="EQ preset voicing to apply pre-compression."),
+    x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
 ) -> Response:
     """Master target audio using a reference track and return mastered bytes."""
 
@@ -70,18 +72,22 @@ async def master(
         status = 415 if error.code in {"unsupported_container", "unsupported_codec"} else 400
         raise HTTPException(status_code=status, detail=error.as_dict()) from error
 
+    correlation_id = x_correlation_id or str(uuid4())
+
     try:
         mastered_bytes = master_bytes(
             target_bytes=target_asset.raw_bytes,
             reference_bytes=reference_asset.raw_bytes,
             eq_mode=parsed_eq_mode,
             eq_preset=parsed_eq_preset,
+            correlation_id=correlation_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error
 
     response = Response(content=mastered_bytes, media_type="audio/wav")
 
+    response.headers["X-Correlation-Id"] = correlation_id
     response.headers["X-Policy-Version"] = DEFAULT_MASTERING_PROFILE.policy_version
     response.headers["X-Ingest-Policy-Id"] = DEFAULT_INGEST_POLICY.policy_id
     response.headers["X-Normalization-Policy-Id"] = DEFAULT_NORMALIZATION_POLICY.policy_id
@@ -101,5 +107,13 @@ async def master(
 
     if storage_url:
         response.headers["X-Mastered-Object-Url"] = storage_url
+        from .interfaces.api_handlers import _event_publisher
+
+        _event_publisher.publish(
+            ArtifactStored(
+                correlation_id=correlation_id,
+                payload_summary={"destination": storage_url, "storage_kind": "object_store"},
+            )
+        )
 
     return response

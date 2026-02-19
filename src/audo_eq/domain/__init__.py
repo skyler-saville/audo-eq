@@ -1,5 +1,6 @@
 """DDD domain layer."""
 
+from .events import ArtifactStored, DomainEvent, IngestValidated, MasteringDecided, MasteringFailed, MasteringRendered, TrackAnalyzed
 from .models import AudioAsset, MasteringRequest, MasteringResult, ValidationStatus
 from .policies import (
     DEFAULT_INGEST_POLICY,
@@ -12,6 +13,13 @@ from .policies import (
 from .services import compute_loudness_gain_delta_db
 
 __all__ = [
+    "DomainEvent",
+    "IngestValidated",
+    "TrackAnalyzed",
+    "MasteringDecided",
+    "MasteringRendered",
+    "ArtifactStored",
+    "MasteringFailed",
     "AudioAsset",
     "MasteringRequest",
     "MasteringResult",
