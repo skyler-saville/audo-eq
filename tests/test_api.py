@@ -21,6 +21,10 @@ def make_wav_bytes(*, duration_seconds: float = 0.1, sample_rate: int = 48_000, 
 
 
 def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "audo_eq.api.master_bytes",
+        lambda **kwargs: make_wav_bytes(),
+    )
     monkeypatch.setattr("audo_eq.api.store_mastered_audio", lambda **kwargs: "https://storage.local/mastered/file.wav")
 
     response = client.post(
@@ -57,3 +61,49 @@ def test_master_forwards_eq_mode(monkeypatch) -> None:
     assert response.status_code == 200
     assert captured["eq_mode"].value == "reference-match"
     assert captured["eq_preset"].value == "warm"
+
+
+def test_master_parses_query_options_case_insensitively(monkeypatch) -> None:
+    captured = {}
+
+    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset):
+        captured["eq_mode"] = eq_mode
+        captured["eq_preset"] = eq_preset
+        return make_wav_bytes()
+
+    monkeypatch.setattr("audo_eq.api.master_bytes", fake_master_bytes)
+    monkeypatch.setattr("audo_eq.api.store_mastered_audio", lambda **kwargs: None)
+
+    response = client.post(
+        "/master?eq_mode=REFERENCE-MATCH&eq_preset=WARM",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["eq_mode"].value == "reference-match"
+    assert captured["eq_preset"].value == "warm"
+
+
+def test_master_rejects_invalid_eq_preset_with_400() -> None:
+    response = client.post(
+        "/master?eq_preset=unknown",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"]["code"] == "invalid_query_parameter"
+    assert payload["detail"]["parameter"] == "eq_preset"
+    assert payload["detail"]["allowed_values"] == [
+        "neutral",
+        "warm",
+        "bright",
+        "vocal-presence",
+        "bass-boost",
+    ]

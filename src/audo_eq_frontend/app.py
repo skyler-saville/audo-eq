@@ -4,6 +4,8 @@ from typing import Any
 import requests
 from flask import Flask, Response, render_template_string, request
 
+from audo_eq.mastering_options import EqMode, EqPreset, enum_values
+
 app = Flask(__name__)
 
 
@@ -24,6 +26,22 @@ INDEX_TEMPLATE = """
       <p>
         <label for="reference">Reference file:</label>
         <input id="reference" name="reference" type="file" required>
+      </p>
+      <p>
+        <label for="eq_mode">EQ mode:</label>
+        <select id="eq_mode" name="eq_mode" required>
+          {% for value in eq_mode_values %}
+          <option value="{{ value }}" {% if value == default_eq_mode %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="eq_preset">EQ preset:</label>
+        <select id="eq_preset" name="eq_preset" required>
+          {% for value in eq_preset_values %}
+          <option value="{{ value }}" {% if value == default_eq_preset %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
       </p>
       <button type="submit">Master</button>
     </form>
@@ -79,13 +97,21 @@ def _frontend_port() -> int:
 
 @app.get("/")
 def index() -> str:
-    return render_template_string(INDEX_TEMPLATE)
+    return render_template_string(
+        INDEX_TEMPLATE,
+        eq_mode_values=enum_values(EqMode),
+        eq_preset_values=enum_values(EqPreset),
+        default_eq_mode=EqMode.FIXED.value,
+        default_eq_preset=EqPreset.NEUTRAL.value,
+    )
 
 
 @app.post("/master")
 def master() -> Response | tuple[str, int]:
     target = request.files.get("target")
     reference = request.files.get("reference")
+    eq_mode = request.form.get("eq_mode", EqMode.FIXED.value)
+    eq_preset = request.form.get("eq_preset", EqPreset.NEUTRAL.value)
 
     if target is None or reference is None:
         payload = {"error": "Both 'target' and 'reference' files are required."}
@@ -97,7 +123,12 @@ def master() -> Response | tuple[str, int]:
     }
 
     try:
-        upstream = requests.post(f"{_api_base_url()}/master", files=files, timeout=120)
+        upstream = requests.post(
+            f"{_api_base_url()}/master",
+            params={"eq_mode": eq_mode, "eq_preset": eq_preset},
+            files=files,
+            timeout=120,
+        )
     except requests.RequestException as exc:
         payload = {"error": "Failed to contact API", "detail": str(exc)}
         return render_template_string(ERROR_TEMPLATE, status=502, payload=payload), 502

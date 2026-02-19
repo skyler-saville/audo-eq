@@ -14,7 +14,8 @@ from .analysis import AnalysisPayload, analyze_tracks
 from .decision import DecisionPayload, decide_mastering
 from .ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
 from .normalization import normalize_audio
-from .processing import EqMode, EqPreset, apply_processing_with_loudness_target, measure_integrated_lufs
+from .mastering_options import EqMode, EqPreset
+from .processing import apply_processing_with_loudness_target, measure_integrated_lufs
 
 _LOUDNESS_GAIN_MIN_DB = -12.0
 _LOUDNESS_GAIN_MAX_DB = 12.0
