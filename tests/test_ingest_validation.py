@@ -55,6 +55,18 @@ def make_mp3_bytes(*, bitrate_kbps: int = 128, sample_rate: int = 44_100, second
     return frame * frame_count
 
 
+def make_mp3_bytes_with_header(*, version_id: int = 0x3, layer: int = 0x1, bitrate_idx: int = 9, sample_idx: int = 0) -> bytes:
+    header = 0
+    header |= 0x7FF << 21
+    header |= version_id << 19
+    header |= layer << 17
+    header |= 0x1 << 16
+    header |= bitrate_idx << 12
+    header |= sample_idx << 10
+    frame = header.to_bytes(4, "big") + (b"\x00" * 256)
+    return frame * 8
+
+
 def make_id3_prefixed_mp3_bytes() -> bytes:
     mp3_payload = make_mp3_bytes()
     id3_payload = b"TEST" * 3
@@ -152,6 +164,17 @@ def test_validate_accepts_id3_prefixed_mp3(tmp_path: Path) -> None:
     assert metadata.codec == "mpeg1_layer3"
 
 
+def test_validate_accepts_alternate_valid_mpeg_sync_header(tmp_path: Path) -> None:
+    mp3 = tmp_path / "mpeg2_layer3.mp3"
+    mp3.write_bytes(make_mp3_bytes_with_header(version_id=0x2, layer=0x1, bitrate_idx=8, sample_idx=0))
+
+    with pytest.raises(IngestValidationError) as exc:
+        validate_audio_file(mp3)
+
+    assert exc.value.code == "unsupported_codec_profile"
+    assert "Unsupported MPEG profile" in exc.value.message
+
+
 def test_validate_rejects_mp3_when_no_valid_frame_found(tmp_path: Path) -> None:
     mp3 = tmp_path / "no_frame.mp3"
     id3_payload = b"\x00" * 12
@@ -169,7 +192,37 @@ def test_validate_rejects_mp3_when_no_valid_frame_found(tmp_path: Path) -> None:
     with pytest.raises(IngestValidationError) as exc:
         validate_audio_file(mp3)
 
-    assert exc.value.code == "no_valid_frame"
+    assert exc.value.code == "mp3_malformed_header"
+
+
+def test_validate_rejects_mp3_with_malformed_id3_size(tmp_path: Path) -> None:
+    mp3 = tmp_path / "bad_id3_size.mp3"
+    malformed_synchsafe = bytes([0x80, 0x00, 0x00, 0x01])
+    mp3.write_bytes(b"ID3" + b"\x04\x00" + b"\x00" + malformed_synchsafe + (b"\x00" * 32))
+
+    with pytest.raises(IngestValidationError) as exc:
+        validate_audio_file(mp3)
+
+    assert exc.value.code == "id3_malformed_header"
+
+
+def test_validate_rejects_mp3_with_truncated_id3_payload(tmp_path: Path) -> None:
+    mp3 = tmp_path / "truncated_id3.mp3"
+    declared_size = 128
+    synchsafe_size = bytes(
+        [
+            (declared_size >> 21) & 0x7F,
+            (declared_size >> 14) & 0x7F,
+            (declared_size >> 7) & 0x7F,
+            declared_size & 0x7F,
+        ]
+    )
+    mp3.write_bytes(b"ID3" + b"\x04\x00" + b"\x00" + synchsafe_size + (b"\x00" * 12))
+
+    with pytest.raises(IngestValidationError) as exc:
+        validate_audio_file(mp3)
+
+    assert exc.value.code == "id3_malformed_header"
 
 
 def test_validate_rejects_mp3_with_unsupported_codec(tmp_path: Path) -> None:
@@ -183,4 +236,4 @@ def test_validate_rejects_mp3_with_unsupported_codec(tmp_path: Path) -> None:
     with pytest.raises(IngestValidationError) as exc:
         validate_audio_file(mp3)
 
-    assert exc.value.code == "unsupported_codec"
+    assert exc.value.code == "unsupported_codec_profile"
