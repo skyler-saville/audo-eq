@@ -83,6 +83,30 @@ ERROR_TEMPLATE = """
 """
 
 
+SUCCESS_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Mastering Success</title>
+  </head>
+  <body>
+    <h1>Mastering complete</h1>
+    <p><strong>Filename:</strong> {{ filename }}</p>
+    <p><strong>Content type:</strong> {{ content_type }}</p>
+    {% if mastered_object_url %}
+    <p><strong>X-Mastered-Object-Url:</strong> <a href="{{ mastered_object_url }}">{{ mastered_object_url }}</a></p>
+    {% endif %}
+    <p>
+      <a href="/">Master another file</a>
+      |
+      <a href="/health">Check health</a>
+    </p>
+  </body>
+</html>
+"""
+
+
 def _api_base_url() -> str:
     return os.getenv("AUDO_EQ_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
@@ -137,6 +161,20 @@ def master() -> Response | tuple[str, int]:
 
     if upstream.ok:
         filename = _content_disposition_filename(upstream.headers.get("content-disposition"))
+        mastered_object_url = upstream.headers.get("X-Mastered-Object-Url")
+        download = request.args.get("download", "1") != "0"
+
+        if not download:
+            return (
+                render_template_string(
+                    SUCCESS_TEMPLATE,
+                    filename=filename,
+                    content_type=content_type,
+                    mastered_object_url=mastered_object_url,
+                ),
+                upstream.status_code,
+            )
+
         disposition = f'attachment; filename="{filename}"'
         return Response(
             upstream.content,
