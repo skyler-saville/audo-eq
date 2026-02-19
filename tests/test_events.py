@@ -54,7 +54,7 @@ def test_master_bytes_emits_events_in_order_success(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "audo_eq.application.mastering_service.decide_mastering",
-        lambda analysis: DecisionPayload(0.0, 0.0, 0.0, -20.0, 2.0, -0.9),
+        lambda analysis, **kwargs: DecisionPayload(0.0, 0.0, 0.0, -20.0, 2.0, -0.9),
     )
     monkeypatch.setattr(
         "audo_eq.application.mastering_service.apply_processing_with_loudness_target",
@@ -109,7 +109,7 @@ def test_master_bytes_pipeline_failure_event_order(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "audo_eq.application.mastering_service.decide_mastering",
-        lambda analysis: DecisionPayload(0.0, 0.0, 0.0, -20.0, 2.0, -0.9),
+        lambda analysis, **kwargs: DecisionPayload(0.0, 0.0, 0.0, -20.0, 2.0, -0.9),
     )
 
     def fail_processing(**kwargs):

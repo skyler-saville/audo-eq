@@ -6,11 +6,40 @@ from dataclasses import dataclass
 
 import numpy as np
 
-_EQ_BAND_EDGES_HZ = np.array([20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0])
-_EQ_SMOOTHING_KERNEL = np.array([0.25, 0.5, 0.25], dtype=np.float64)
-_EQ_MAX_ABS_DB = 4.0
-_EQ_MIN_CORRECTION_DB = 0.75
-_TARGET_NORMALIZED_RMS_DB = -24.0
+@dataclass(frozen=True, slots=True)
+class AnalysisTuning:
+    """Tunable constants for analysis and reference-match EQ derivation."""
+
+    eq_band_edges_hz: tuple[float, ...]
+    eq_smoothing_kernel: tuple[float, ...]
+    eq_max_abs_db: float
+    eq_min_correction_db: float
+    target_normalized_rms_db: float
+
+
+ANALYSIS_TUNINGS: dict[str, AnalysisTuning] = {
+    "default": AnalysisTuning(
+        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_smoothing_kernel=(0.25, 0.5, 0.25),
+        eq_max_abs_db=4.0,
+        eq_min_correction_db=0.75,
+        target_normalized_rms_db=-24.0,
+    ),
+    "conservative": AnalysisTuning(
+        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_smoothing_kernel=(0.2, 0.6, 0.2),
+        eq_max_abs_db=3.0,
+        eq_min_correction_db=1.0,
+        target_normalized_rms_db=-24.0,
+    ),
+    "aggressive": AnalysisTuning(
+        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_smoothing_kernel=(0.3, 0.4, 0.3),
+        eq_max_abs_db=5.5,
+        eq_min_correction_db=0.5,
+        target_normalized_rms_db=-23.0,
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +101,7 @@ def _rms_db(audio: np.ndarray) -> float:
     return float(20.0 * np.log10(rms))
 
 
-def _normalize_to_target_rms(audio: np.ndarray, target_rms_db: float = _TARGET_NORMALIZED_RMS_DB) -> np.ndarray:
+def _normalize_to_target_rms(audio: np.ndarray, target_rms_db: float) -> np.ndarray:
     """Normalize loudness by RMS so spectral deltas compare tone, not level."""
 
     if audio.size == 0:
@@ -115,7 +144,7 @@ def _spectral_metrics(audio: np.ndarray, sample_rate: int) -> tuple[float, float
     return centroid, rolloff, low, mid, high
 
 
-def _band_energies(audio: np.ndarray, sample_rate: int, edges_hz: np.ndarray = _EQ_BAND_EDGES_HZ) -> tuple[np.ndarray, np.ndarray]:
+def _band_energies(audio: np.ndarray, sample_rate: int, edges_hz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Average energy per octave-ish band from FFT power spectrum."""
 
     if audio.size == 0:
@@ -144,13 +173,14 @@ def _derive_eq_band_corrections(
     target_audio: np.ndarray,
     reference_audio: np.ndarray,
     sample_rate: int,
-    max_abs_db: float = _EQ_MAX_ABS_DB,
-    min_correction_db: float = _EQ_MIN_CORRECTION_DB,
+    tuning: AnalysisTuning,
 ) -> tuple[EqBandCorrection, ...]:
     """Create bounded/smoothed dB deltas for an EQ stage."""
 
-    target_centers, target_energy = _band_energies(target_audio, sample_rate)
-    reference_centers, reference_energy = _band_energies(reference_audio, sample_rate)
+    edges_hz = np.asarray(tuning.eq_band_edges_hz, dtype=np.float64)
+    smoothing_kernel = np.asarray(tuning.eq_smoothing_kernel, dtype=np.float64)
+    target_centers, target_energy = _band_energies(target_audio, sample_rate, edges_hz=edges_hz)
+    reference_centers, reference_energy = _band_energies(reference_audio, sample_rate, edges_hz=edges_hz)
     if target_energy.size == 0 or reference_energy.size == 0:
         return tuple()
 
@@ -160,15 +190,23 @@ def _derive_eq_band_corrections(
     target_db = 10.0 * np.log10(target_energy + 1e-12)
     reference_db = 10.0 * np.log10(reference_energy + 1e-12)
     deltas_db = reference_db - target_db
-    smoothed = np.convolve(deltas_db, _EQ_SMOOTHING_KERNEL, mode="same")
-    bounded = np.clip(smoothed, -max_abs_db, max_abs_db)
+    smoothed = np.convolve(deltas_db, smoothing_kernel, mode="same")
+    bounded = np.clip(smoothed, -tuning.eq_max_abs_db, tuning.eq_max_abs_db)
 
     corrections = []
     for center_hz, delta_db in zip(target_centers, bounded):
-        if abs(delta_db) < min_correction_db:
+        if abs(delta_db) < tuning.eq_min_correction_db:
             continue
         corrections.append(EqBandCorrection(center_hz=float(center_hz), delta_db=float(delta_db)))
     return tuple(corrections)
+
+
+def resolve_analysis_tuning(profile: str = "default") -> AnalysisTuning:
+    try:
+        return ANALYSIS_TUNINGS[profile]
+    except KeyError as exc:
+        allowed = ", ".join(sorted(ANALYSIS_TUNINGS))
+        raise ValueError(f"Unknown analysis profile '{profile}'. Allowed: {allowed}.") from exc
 
 
 def compute_track_metrics(audio: np.ndarray, sample_rate: int) -> TrackMetrics:
@@ -195,13 +233,19 @@ def compute_track_metrics(audio: np.ndarray, sample_rate: int) -> TrackMetrics:
     )
 
 
-def analyze_tracks(target_audio: np.ndarray, reference_audio: np.ndarray, sample_rate: int) -> AnalysisPayload:
+def analyze_tracks(
+    target_audio: np.ndarray,
+    reference_audio: np.ndarray,
+    sample_rate: int,
+    profile: str = "default",
+) -> AnalysisPayload:
     """Analyze target and reference tracks for downstream decisioning."""
 
+    tuning = resolve_analysis_tuning(profile)
     target_mono = _mono(target_audio)
     reference_mono = _mono(reference_audio)
-    target_normalized = _normalize_to_target_rms(target_mono)
-    reference_normalized = _normalize_to_target_rms(reference_mono)
+    target_normalized = _normalize_to_target_rms(target_mono, target_rms_db=tuning.target_normalized_rms_db)
+    reference_normalized = _normalize_to_target_rms(reference_mono, target_rms_db=tuning.target_normalized_rms_db)
 
     return AnalysisPayload(
         target=compute_track_metrics(target_audio, sample_rate),
@@ -210,5 +254,6 @@ def analyze_tracks(target_audio: np.ndarray, reference_audio: np.ndarray, sample
             target_audio=target_normalized,
             reference_audio=reference_normalized,
             sample_rate=sample_rate,
+            tuning=tuning,
         ),
     )

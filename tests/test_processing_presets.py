@@ -1,3 +1,4 @@
+import pytest
 from pedalboard import HighShelfFilter, LowShelfFilter
 
 from audo_eq.analysis import EqBandCorrection
@@ -22,8 +23,8 @@ def test_build_dsp_chain_neutral_preset_keeps_current_shelf_gains() -> None:
     low_shelf = next(plugin for plugin in chain if isinstance(plugin, LowShelfFilter))
     high_shelf = next(plugin for plugin in chain if isinstance(plugin, HighShelfFilter))
 
-    assert low_shelf.gain_db == 0.5
-    assert high_shelf.gain_db == -0.5
+    assert low_shelf.gain_db == pytest.approx(0.5)
+    assert high_shelf.gain_db == pytest.approx(-0.5)
 
 
 def test_build_dsp_chain_applies_preset_bias_to_reference_match_bands() -> None:
@@ -36,5 +37,5 @@ def test_build_dsp_chain_applies_preset_bias_to_reference_match_bands() -> None:
 
     low_shelves = [plugin for plugin in chain if isinstance(plugin, LowShelfFilter)]
 
-    assert low_shelves[0].gain_db == 2.0
-    assert low_shelves[1].gain_db == 1.5
+    assert low_shelves[0].gain_db == pytest.approx(2.0)
+    assert low_shelves[1].gain_db == pytest.approx(1.5)

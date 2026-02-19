@@ -27,7 +27,7 @@ from audo_eq.infrastructure.pedalboard_codec import load_audio_file, write_audio
 from audo_eq.infrastructure.temp_files import temporary_wav_path
 from audo_eq.mastering_options import EqMode, EqPreset
 from audo_eq.normalization import normalize_audio
-from audo_eq.processing import apply_processing_with_loudness_target, measure_integrated_lufs
+from audo_eq.processing import apply_processing_with_loudness_target, measure_integrated_lufs, resolve_mastering_profile
 
 
 @dataclass(slots=True)
@@ -112,8 +112,17 @@ class MasterTrackAgainstReference:
         target_lufs = measure_integrated_lufs(target_audio, sample_rate)
         reference_lufs = measure_integrated_lufs(reference_audio, sample_rate)
         loudness_gain_db = compute_loudness_gain_delta_db(target_lufs, reference_lufs)
+        mastering_profile_name = resolve_mastering_profile(
+            eq_preset=eq_preset,
+            mastering_profile=self.mastering_profile.profile_id,
+        )
 
-        analysis = analyze_tracks(target_audio=target_audio, reference_audio=reference_audio, sample_rate=sample_rate)
+        analysis = analyze_tracks(
+            target_audio=target_audio,
+            reference_audio=reference_audio,
+            sample_rate=sample_rate,
+            profile=mastering_profile_name,
+        )
         self.event_publisher.publish(
             TrackAnalyzed(
                 correlation_id=run_correlation_id,
@@ -125,7 +134,7 @@ class MasterTrackAgainstReference:
                 },
             )
         )
-        decision = decide_mastering(analysis)
+        decision = decide_mastering(analysis, profile=mastering_profile_name)
         self.event_publisher.publish(
             MasteringDecided(
                 correlation_id=run_correlation_id,
@@ -145,6 +154,7 @@ class MasterTrackAgainstReference:
             eq_mode=eq_mode,
             eq_preset=eq_preset,
             eq_band_corrections=analysis.eq_band_corrections,
+            mastering_profile=mastering_profile_name,
         )
         self.event_publisher.publish(
             MasteringRendered(
