@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 
 from .core import ingest_local_mastering_request, master_file
-from .processing import EqMode, EqPreset
+from .mastering_options import EqMode, EqPreset
 
 app = typer.Typer(help="Audo_EQ command line interface")
 

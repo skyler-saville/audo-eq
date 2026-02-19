@@ -7,7 +7,7 @@ from fastapi.responses import Response
 
 from .core import _asset_from_metadata, master_bytes
 from .ingest_validation import IngestValidationError, validate_audio_bytes
-from .processing import EqMode, EqPreset
+from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
 from .storage import store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
@@ -24,10 +24,36 @@ def health() -> dict[str, str]:
 async def master(
     target: UploadFile = File(..., description="Target audio file"),
     reference: UploadFile = File(..., description="Reference audio file"),
-    eq_mode: EqMode = Query(EqMode.FIXED, description="EQ strategy: fixed or reference-match."),
-    eq_preset: EqPreset = Query(EqPreset.NEUTRAL, description="EQ preset voicing to apply pre-compression."),
+    eq_mode: str = Query(EqMode.FIXED.value, description="EQ strategy: fixed or reference-match."),
+    eq_preset: str = Query(EqPreset.NEUTRAL.value, description="EQ preset voicing to apply pre-compression."),
 ) -> Response:
     """Master target audio using a reference track and return mastered bytes."""
+
+    try:
+        parsed_eq_mode = parse_case_insensitive_enum(eq_mode, EqMode)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_query_parameter",
+                "message": str(error),
+                "parameter": "eq_mode",
+                "allowed_values": list(enum_values(EqMode)),
+            },
+        ) from error
+
+    try:
+        parsed_eq_preset = parse_case_insensitive_enum(eq_preset, EqPreset)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_query_parameter",
+                "message": str(error),
+                "parameter": "eq_preset",
+                "allowed_values": list(enum_values(EqPreset)),
+            },
+        ) from error
 
     try:
         target_bytes = await target.read()
@@ -49,8 +75,8 @@ async def master(
         mastered_bytes = master_bytes(
             target_bytes=target_asset.raw_bytes,
             reference_bytes=reference_asset.raw_bytes,
-            eq_mode=eq_mode,
-            eq_preset=eq_preset,
+            eq_mode=parsed_eq_mode,
+            eq_preset=parsed_eq_preset,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error

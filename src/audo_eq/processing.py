@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
 import numpy as np
-import pyloudnorm as pyln
 from pedalboard import (
     Compressor,
     Gain,
@@ -19,26 +17,9 @@ from pedalboard import (
 
 from .analysis import EqBandCorrection
 from .decision import DecisionPayload
+from .mastering_options import EqMode, EqPreset
 
 _POST_LIMITER_LUFS_TOLERANCE = 0.3
-
-
-class EqMode(str, Enum):
-    """Available EQ behavior profiles."""
-
-    FIXED = "fixed"
-    REFERENCE_MATCH = "reference-match"
-
-
-class EqPreset(str, Enum):
-    """Available EQ tonal presets."""
-
-    NEUTRAL = "neutral"
-    WARM = "warm"
-    BRIGHT = "bright"
-    VOCAL_PRESENCE = "vocal-presence"
-    BASS_BOOST = "bass-boost"
-
 
 @dataclass(frozen=True, slots=True)
 class EqPresetTuning:
@@ -75,6 +56,8 @@ def _audio_for_loudness_measurement(audio: np.ndarray) -> np.ndarray:
 
 def measure_integrated_lufs(audio: np.ndarray, sample_rate: int) -> float:
     """Measure integrated loudness in LUFS."""
+
+    import pyloudnorm as pyln
 
     meter = pyln.Meter(sample_rate)
     measured = float(meter.integrated_loudness(_audio_for_loudness_measurement(audio)))
