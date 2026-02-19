@@ -3,6 +3,7 @@ import wave
 
 from fastapi.testclient import TestClient
 
+from audo_eq import storage
 from audo_eq.api import app
 
 
@@ -107,3 +108,62 @@ def test_master_rejects_invalid_eq_preset_with_400() -> None:
         "vocal-presence",
         "bass-boost",
     ]
+
+
+def test_master_returns_bytes_when_storage_write_fails_non_strict(monkeypatch) -> None:
+    storage.load_storage_config.cache_clear()
+    storage.get_storage_client.cache_clear()
+    monkeypatch.setenv("AUDO_EQ_STORAGE_ENABLED", "true")
+    monkeypatch.setenv("AUDO_EQ_STORAGE_STRICT", "false")
+
+    class _FailingClient:
+        def bucket_exists(self, bucket_name: str) -> bool:
+            return True
+
+        def put_object(self, bucket_name: str, object_name: str, data, length: int, content_type: str) -> None:
+            raise RuntimeError("write failed")
+
+    monkeypatch.setattr(storage, "get_storage_client", lambda: _FailingClient())
+    monkeypatch.setattr("audo_eq.api.master_bytes", lambda **kwargs: make_wav_bytes())
+    monkeypatch.setattr("audo_eq.api.store_mastered_audio", storage.store_mastered_audio)
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("x-mastered-object-url") is None
+    assert response.content
+
+
+def test_master_returns_503_when_storage_write_fails_strict(monkeypatch) -> None:
+    storage.load_storage_config.cache_clear()
+    storage.get_storage_client.cache_clear()
+    monkeypatch.setenv("AUDO_EQ_STORAGE_ENABLED", "true")
+    monkeypatch.setenv("AUDO_EQ_STORAGE_STRICT", "true")
+
+    class _FailingClient:
+        def bucket_exists(self, bucket_name: str) -> bool:
+            return True
+
+        def put_object(self, bucket_name: str, object_name: str, data, length: int, content_type: str) -> None:
+            raise RuntimeError("write failed")
+
+    monkeypatch.setattr(storage, "get_storage_client", lambda: _FailingClient())
+    monkeypatch.setattr("audo_eq.api.master_bytes", lambda **kwargs: make_wav_bytes())
+    monkeypatch.setattr("audo_eq.api.store_mastered_audio", storage.store_mastered_audio)
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "storage_unavailable"

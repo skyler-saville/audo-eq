@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     from minio import Minio
@@ -17,6 +21,7 @@ class StorageConfig:
     """Runtime configuration for S3-compatible object storage."""
 
     enabled: bool
+    strict: bool
     endpoint: str
     access_key: str
     secret_key: str
@@ -31,6 +36,7 @@ def load_storage_config() -> StorageConfig:
 
     return StorageConfig(
         enabled=os.getenv("AUDO_EQ_STORAGE_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
+        strict=os.getenv("AUDO_EQ_STORAGE_STRICT", "false").lower() in {"1", "true", "yes", "on"},
         endpoint=os.getenv("AUDO_EQ_S3_ENDPOINT", "minio:9000"),
         access_key=os.getenv("AUDO_EQ_S3_ACCESS_KEY", "minioadmin"),
         secret_key=os.getenv("AUDO_EQ_S3_SECRET_KEY", "minioadmin"),
@@ -38,6 +44,10 @@ def load_storage_config() -> StorageConfig:
         secure=os.getenv("AUDO_EQ_S3_SECURE", "false").lower() in {"1", "true", "yes", "on"},
         region=os.getenv("AUDO_EQ_S3_REGION"),
     )
+
+
+class StorageWriteError(RuntimeError):
+    """Raised when mastered audio cannot be persisted in strict mode."""
 
 
 @lru_cache(maxsize=1)
@@ -63,23 +73,30 @@ def store_mastered_audio(*, object_name: str, audio_bytes: bytes, content_type: 
     if not config.enabled:
         return None
 
-    client = get_storage_client()
-    if not client.bucket_exists(config.bucket):
-        client.make_bucket(config.bucket)
+    try:
+        client = get_storage_client()
+        if not client.bucket_exists(config.bucket):
+            client.make_bucket(config.bucket)
 
-    client.put_object(
-        bucket_name=config.bucket,
-        object_name=object_name,
-        data=_bytes_to_stream(audio_bytes),
-        length=len(audio_bytes),
-        content_type=content_type,
-    )
+        client.put_object(
+            bucket_name=config.bucket,
+            object_name=object_name,
+            data=_bytes_to_stream(audio_bytes),
+            length=len(audio_bytes),
+            content_type=content_type,
+        )
 
-    return client.presigned_get_object(
-        bucket_name=config.bucket,
-        object_name=object_name,
-        expires=timedelta(hours=1),
-    )
+        return client.presigned_get_object(
+            bucket_name=config.bucket,
+            object_name=object_name,
+            expires=timedelta(hours=1),
+        )
+    except Exception as error:
+        if config.strict:
+            raise StorageWriteError("failed to store mastered audio") from error
+
+        logger.warning("Mastered audio storage failed; returning response without object URL.", exc_info=error)
+        return None
 
 
 def _bytes_to_stream(payload: bytes):

@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from .core import _asset_from_metadata, master_bytes
 from .ingest_validation import IngestValidationError, validate_audio_bytes
 from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
-from .storage import store_mastered_audio
+from .storage import StorageWriteError, store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
 
@@ -83,11 +83,18 @@ async def master(
 
     response = Response(content=mastered_bytes, media_type="audio/wav")
 
-    storage_url = store_mastered_audio(
-        object_name=f"mastered/{uuid4()}.wav",
-        audio_bytes=mastered_bytes,
-        content_type=target.content_type or "audio/wav",
-    )
+    try:
+        storage_url = store_mastered_audio(
+            object_name=f"mastered/{uuid4()}.wav",
+            audio_bytes=mastered_bytes,
+            content_type=target.content_type or "audio/wav",
+        )
+    except StorageWriteError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "storage_unavailable", "message": "failed to persist mastered audio"},
+        ) from error
+
     if storage_url:
         response.headers["X-Mastered-Object-Url"] = storage_url
 
