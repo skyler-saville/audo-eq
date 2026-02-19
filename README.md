@@ -128,6 +128,8 @@ Or configure cascading defaults in `.env` and run a shorter command:
 COMPOSE_FILE=compose.yaml:compose.override.yaml docker compose up --build
 ```
 
+`make dev-up` and `make prod-up` run a preflight port-collision check before starting Compose. You can also run checks directly with `make preflight-dev` or `make preflight-prod`.
+
 This stack also starts a local MinIO server at:
 
 - S3 API: `http://127.0.0.1:9000`

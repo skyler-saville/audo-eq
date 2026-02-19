@@ -5,6 +5,7 @@ SHELL := /bin/bash
 ENV_FILE ?= .env
 POETRY ?= poetry
 UVICORN_APP ?= audo_eq.api:app
+PORT_CHECK ?= ./scripts/check_ports.py
 
 # Load local env if present so Make targets share the same config as Compose/app scripts.
 ifneq (,$(wildcard $(ENV_FILE)))
@@ -22,7 +23,7 @@ COMPOSE_BASE := docker compose --env-file $(ENV_FILE)
 COMPOSE_DEV_FILES := -f compose.yaml -f compose.override.yaml
 COMPOSE_PROD_FILES := -f compose.yaml -f compose.prod.yaml
 
-.PHONY: help ensure-env install test api frontend dev-up dev-down prod-up prod-down logs health
+.PHONY: help ensure-env install test api frontend preflight-dev preflight-prod dev-up dev-down prod-up prod-down logs health
 
 help: ## Show available commands.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-16s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -50,13 +51,19 @@ frontend: ## Run Flask frontend with API URL from .env/.make vars.
 	AUDO_EQ_FRONTEND_PORT=$(AUDO_EQ_FRONTEND_PORT) \
 	$(POETRY) run audo-eq-frontend
 
-dev-up: ensure-env ## Start Docker Compose in local development mode.
+preflight-dev: ensure-env ## Check dev compose host ports for collisions.
+	$(PORT_CHECK) --env-file $(ENV_FILE) --mode dev
+
+preflight-prod: ensure-env ## Check prod compose host ports for collisions.
+	$(PORT_CHECK) --env-file $(ENV_FILE) --mode prod
+
+dev-up: preflight-dev ## Start Docker Compose in local development mode.
 	$(COMPOSE_BASE) $(COMPOSE_DEV_FILES) up --build
 
 dev-down: ensure-env ## Stop Docker Compose development stack.
 	$(COMPOSE_BASE) $(COMPOSE_DEV_FILES) down
 
-prod-up: ensure-env ## Start Docker Compose in production-style mode.
+prod-up: preflight-prod ## Start Docker Compose in production-style mode.
 	$(COMPOSE_BASE) $(COMPOSE_PROD_FILES) up -d --build
 
 prod-down: ensure-env ## Stop Docker Compose production-style stack.
