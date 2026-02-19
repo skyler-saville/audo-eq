@@ -167,3 +167,84 @@ def test_master_returns_503_when_storage_write_fails_strict(monkeypatch) -> None
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "storage_unavailable"
+
+
+def test_health_returns_ok_status_shape() -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_master_requires_both_uploads() -> None:
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_master_rejects_invalid_or_corrupt_uploads() -> None:
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.txt", b"not audio", "text/plain"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"]["code"] == "unsupported_container"
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", b"RIFF\x00\x00\x00\x00WAVE", "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "corrupted_file"
+
+
+def test_master_maps_value_error_to_invalid_payload(monkeypatch) -> None:
+    monkeypatch.setattr("audo_eq.api.master_bytes", lambda **kwargs: (_ for _ in ()).throw(ValueError("bad payload")))
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_payload"
+
+
+def test_master_response_media_type_falls_back_to_audio_wav(monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr("audo_eq.api.master_bytes", lambda **kwargs: make_wav_bytes())
+
+    def fake_store_mastered_audio(*, object_name: str, audio_bytes: bytes, content_type: str):
+        captured["content_type"] = content_type
+        return None
+
+    monkeypatch.setattr("audo_eq.api.store_mastered_audio", fake_store_mastered_audio)
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "text/plain"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert captured["content_type"] == "text/plain"
