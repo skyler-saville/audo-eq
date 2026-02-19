@@ -10,6 +10,14 @@ import numpy as np
 from audo_eq.analysis import analyze_tracks
 from audo_eq.decision import decide_mastering
 from audo_eq.domain.models import AudioAsset, MasteringRequest, MasteringResult, ValidationStatus
+from audo_eq.domain.policies import (
+    DEFAULT_INGEST_POLICY,
+    DEFAULT_MASTERING_PROFILE,
+    DEFAULT_NORMALIZATION_POLICY,
+    IngestPolicy,
+    MasteringProfile,
+    NormalizationPolicy,
+)
 from audo_eq.domain.services import compute_loudness_gain_delta_db
 from audo_eq.ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
 from audo_eq.infrastructure.pedalboard_codec import load_audio_file, write_audio_file
@@ -22,6 +30,8 @@ from audo_eq.processing import apply_processing_with_loudness_target, measure_in
 @dataclass(slots=True)
 class ValidateIngest:
     """Use case that validates and materializes ingest assets."""
+
+    ingest_policy: IngestPolicy = DEFAULT_INGEST_POLICY
 
     def asset_from_metadata(self, source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
         return AudioAsset(
@@ -51,12 +61,20 @@ class ValidateIngest:
             target_asset=self.validated_asset_from_path(target_path),
             reference_asset=self.validated_asset_from_path(reference_path),
             output_path=output_path,
+            ingest_policy=self.ingest_policy,
+            normalization_policy=DEFAULT_NORMALIZATION_POLICY,
+            mastering_profile=DEFAULT_MASTERING_PROFILE,
+            policy_version=self.ingest_policy.policy_version,
         )
 
 
 @dataclass(slots=True)
 class MasterTrackAgainstReference:
     """Use case that masters a target track against a reference track."""
+
+    normalization_policy: NormalizationPolicy = DEFAULT_NORMALIZATION_POLICY
+    mastering_profile: MasteringProfile = DEFAULT_MASTERING_PROFILE
+    ingest_policy: IngestPolicy = DEFAULT_INGEST_POLICY
 
     def run_pipeline(
         self,
@@ -82,7 +100,15 @@ class MasterTrackAgainstReference:
             eq_preset=eq_preset,
             eq_band_corrections=analysis.eq_band_corrections,
         )
-        return MasteringResult(analysis=analysis, decision=decision, mastered_audio=mastered_audio)
+        return MasteringResult(
+            analysis=analysis,
+            decision=decision,
+            mastered_audio=mastered_audio,
+            ingest_policy_id=self.ingest_policy.policy_id,
+            normalization_policy_id=self.normalization_policy.policy_id,
+            mastering_profile_id=self.mastering_profile.profile_id,
+            policy_version=self.mastering_profile.policy_version,
+        )
 
     def master_to_path(
         self,
@@ -119,8 +145,8 @@ class MasterTrackAgainstReference:
             target_audio, target_sample_rate = load_audio_file(target_path)
             reference_audio, reference_sample_rate = load_audio_file(reference_path)
 
-            normalized_target = normalize_audio(target_audio, target_sample_rate)
-            normalized_reference = normalize_audio(reference_audio, reference_sample_rate)
+            normalized_target = normalize_audio(target_audio, target_sample_rate, policy=self.normalization_policy)
+            normalized_reference = normalize_audio(reference_audio, reference_sample_rate, policy=self.normalization_policy)
 
             self.master_to_path(
                 target_audio=normalized_target.audio,
@@ -147,8 +173,8 @@ class MasterTrackAgainstReference:
             target_audio, target_sample_rate = load_audio_file(target_path)
             reference_audio, reference_sample_rate = load_audio_file(reference_path)
 
-            normalized_target = normalize_audio(target_audio, target_sample_rate)
-            normalized_reference = normalize_audio(reference_audio, reference_sample_rate)
+            normalized_target = normalize_audio(target_audio, target_sample_rate, policy=request.normalization_policy)
+            normalized_reference = normalize_audio(reference_audio, reference_sample_rate, policy=request.normalization_policy)
 
             self.master_to_path(
                 target_audio=normalized_target.audio,

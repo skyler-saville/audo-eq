@@ -5,6 +5,7 @@ from uuid import uuid4
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from .domain.policies import DEFAULT_INGEST_POLICY, DEFAULT_MASTERING_PROFILE, DEFAULT_NORMALIZATION_POLICY
 from .interfaces.api_handlers import IngestValidationError, build_asset, master_uploaded_bytes
 from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
 from .infrastructure.minio_storage import StorageWriteError, store_mastered_audio
@@ -80,6 +81,11 @@ async def master(
         raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error
 
     response = Response(content=mastered_bytes, media_type="audio/wav")
+
+    response.headers["X-Policy-Version"] = DEFAULT_MASTERING_PROFILE.policy_version
+    response.headers["X-Ingest-Policy-Id"] = DEFAULT_INGEST_POLICY.policy_id
+    response.headers["X-Normalization-Policy-Id"] = DEFAULT_NORMALIZATION_POLICY.policy_id
+    response.headers["X-Mastering-Profile-Id"] = DEFAULT_MASTERING_PROFILE.profile_id
 
     try:
         storage_url = store_mastered_audio(

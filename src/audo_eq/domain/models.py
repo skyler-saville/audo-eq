@@ -10,6 +10,7 @@ import numpy as np
 
 from audo_eq.analysis import AnalysisPayload
 from audo_eq.decision import DecisionPayload
+from audo_eq.domain.policies import IngestPolicy, MasteringProfile, NormalizationPolicy
 
 
 class ValidationStatus(str, Enum):
@@ -44,6 +45,10 @@ class MasteringRequest:
     target_asset: AudioAsset
     reference_asset: AudioAsset
     output_path: Path
+    ingest_policy: IngestPolicy
+    normalization_policy: NormalizationPolicy
+    mastering_profile: MasteringProfile
+    policy_version: str = "v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,3 +58,7 @@ class MasteringResult:
     analysis: AnalysisPayload
     decision: DecisionPayload
     mastered_audio: np.ndarray
+    ingest_policy_id: str
+    normalization_policy_id: str
+    mastering_profile_id: str
+    policy_version: str = "v1"

@@ -38,6 +38,10 @@ def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> N
 
     assert response.status_code == 200
     assert response.headers["x-mastered-object-url"] == "https://storage.local/mastered/file.wav"
+    assert response.headers["x-policy-version"] == "v1"
+    assert response.headers["x-ingest-policy-id"] == "ingest-validation-default"
+    assert response.headers["x-normalization-policy-id"] == "pcm-canonical-default"
+    assert response.headers["x-mastering-profile-id"] == "reference-mastering-default"
 
 
 def test_master_forwards_eq_mode(monkeypatch) -> None:
