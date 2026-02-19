@@ -1,6 +1,7 @@
 """CLI interface for Audo_EQ."""
 
 from pathlib import Path
+from uuid import uuid4
 
 import typer
 
@@ -30,8 +31,17 @@ def master_command(
 ) -> None:
     """Master a target audio file against a reference file."""
 
-    written = master_from_paths(target, reference, output, eq_mode=eq_mode, eq_preset=eq_preset)
+    correlation_id = str(uuid4())
+    written = master_from_paths(
+        target,
+        reference,
+        output,
+        correlation_id=correlation_id,
+        eq_mode=eq_mode,
+        eq_preset=eq_preset,
+    )
     typer.echo(f"Mastered audio written to: {written}")
+    typer.echo(f"Correlation ID: {correlation_id}")
 
 
 if __name__ == "__main__":

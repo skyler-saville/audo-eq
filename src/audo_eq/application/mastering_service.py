@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 
+from audo_eq.application.event_publisher import EventPublisher, NullEventPublisher
 from audo_eq.analysis import analyze_tracks
 from audo_eq.decision import decide_mastering
+from audo_eq.domain.events import ArtifactStored, IngestValidated, MasteringDecided, MasteringFailed, MasteringRendered, TrackAnalyzed
 from audo_eq.domain.models import AudioAsset, MasteringRequest, MasteringResult, ValidationStatus
 from audo_eq.domain.policies import (
     DEFAULT_INGEST_POLICY,
@@ -32,6 +35,7 @@ class ValidateIngest:
     """Use case that validates and materializes ingest assets."""
 
     ingest_policy: IngestPolicy = DEFAULT_INGEST_POLICY
+    event_publisher: EventPublisher = NullEventPublisher()
 
     def asset_from_metadata(self, source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
         return AudioAsset(
@@ -48,18 +52,36 @@ class ValidateIngest:
             validation_status=ValidationStatus.VALIDATED,
         )
 
-    def validated_asset_from_path(self, path: Path) -> AudioAsset:
+    def validated_asset_from_path(self, path: Path, correlation_id: str | None = None) -> AudioAsset:
         metadata = validate_audio_file(path)
         raw_bytes = path.read_bytes()
         asset = self.asset_from_metadata(path.resolve().as_uri(), raw_bytes, metadata)
         audio, sample_rate = load_audio_file(path)
         asset.integrated_lufs = measure_integrated_lufs(audio, sample_rate)
+        self.event_publisher.publish(
+            IngestValidated(
+                correlation_id=correlation_id or str(uuid4()),
+                payload_summary={
+                    "source_uri": asset.source_uri,
+                    "sample_rate_hz": asset.sample_rate_hz,
+                    "channel_count": asset.channel_count,
+                    "duration_seconds": asset.duration_seconds,
+                },
+            )
+        )
         return asset
 
-    def ingest_local_mastering_request(self, target_path: Path, reference_path: Path, output_path: Path) -> MasteringRequest:
+    def ingest_local_mastering_request(
+        self,
+        target_path: Path,
+        reference_path: Path,
+        output_path: Path,
+        correlation_id: str | None = None,
+    ) -> MasteringRequest:
+        run_correlation_id = correlation_id or str(uuid4())
         return MasteringRequest(
-            target_asset=self.validated_asset_from_path(target_path),
-            reference_asset=self.validated_asset_from_path(reference_path),
+            target_asset=self.validated_asset_from_path(target_path, correlation_id=run_correlation_id),
+            reference_asset=self.validated_asset_from_path(reference_path, correlation_id=run_correlation_id),
             output_path=output_path,
             ingest_policy=self.ingest_policy,
             normalization_policy=DEFAULT_NORMALIZATION_POLICY,
@@ -75,21 +97,45 @@ class MasterTrackAgainstReference:
     normalization_policy: NormalizationPolicy = DEFAULT_NORMALIZATION_POLICY
     mastering_profile: MasteringProfile = DEFAULT_MASTERING_PROFILE
     ingest_policy: IngestPolicy = DEFAULT_INGEST_POLICY
+    event_publisher: EventPublisher = NullEventPublisher()
 
     def run_pipeline(
         self,
         target_audio: np.ndarray,
         reference_audio: np.ndarray,
         sample_rate: int,
+        correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
     ) -> MasteringResult:
+        run_correlation_id = correlation_id or str(uuid4())
         target_lufs = measure_integrated_lufs(target_audio, sample_rate)
         reference_lufs = measure_integrated_lufs(reference_audio, sample_rate)
         loudness_gain_db = compute_loudness_gain_delta_db(target_lufs, reference_lufs)
 
         analysis = analyze_tracks(target_audio=target_audio, reference_audio=reference_audio, sample_rate=sample_rate)
+        self.event_publisher.publish(
+            TrackAnalyzed(
+                correlation_id=run_correlation_id,
+                payload_summary={
+                    "sample_rate": sample_rate,
+                    "rms_delta_db": analysis.rms_delta_db,
+                    "centroid_delta_hz": analysis.centroid_delta_hz,
+                    "eq_band_count": len(analysis.eq_band_corrections),
+                },
+            )
+        )
         decision = decide_mastering(analysis)
+        self.event_publisher.publish(
+            MasteringDecided(
+                correlation_id=run_correlation_id,
+                payload_summary={
+                    "gain_db": decision.gain_db,
+                    "compressor_ratio": decision.compressor_ratio,
+                    "limiter_ceiling_db": decision.limiter_ceiling_db,
+                },
+            )
+        )
         mastered_audio = apply_processing_with_loudness_target(
             target_audio=target_audio,
             sample_rate=sample_rate,
@@ -99,6 +145,18 @@ class MasterTrackAgainstReference:
             eq_mode=eq_mode,
             eq_preset=eq_preset,
             eq_band_corrections=analysis.eq_band_corrections,
+        )
+        self.event_publisher.publish(
+            MasteringRendered(
+                correlation_id=run_correlation_id,
+                payload_summary={
+                    "sample_rate": sample_rate,
+                    "target_lufs": target_lufs,
+                    "reference_lufs": reference_lufs,
+                    "eq_mode": eq_mode.value,
+                    "eq_preset": eq_preset.value,
+                },
+            )
         )
         return MasteringResult(
             analysis=analysis,
@@ -116,27 +174,75 @@ class MasterTrackAgainstReference:
         reference_audio: np.ndarray,
         sample_rate: int,
         output_path: Path,
+        correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
     ) -> MasteringResult:
-        result = self.run_pipeline(target_audio, reference_audio, sample_rate, eq_mode=eq_mode, eq_preset=eq_preset)
+        run_correlation_id = correlation_id or str(uuid4())
+        result = self.run_pipeline(
+            target_audio,
+            reference_audio,
+            sample_rate,
+            correlation_id=run_correlation_id,
+            eq_mode=eq_mode,
+            eq_preset=eq_preset,
+        )
         write_audio_file(output_path, result.mastered_audio, sample_rate)
+        self.event_publisher.publish(
+            ArtifactStored(
+                correlation_id=run_correlation_id,
+                payload_summary={"destination": output_path.as_posix(), "storage_kind": "filesystem"},
+            )
+        )
         return result
 
     def master_bytes(
         self,
         target_bytes: bytes,
         reference_bytes: bytes,
+        correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
     ) -> bytes:
+        run_correlation_id = correlation_id or str(uuid4())
         if not target_bytes:
-            raise ValueError("Target audio is empty.")
+            error = ValueError("Target audio is empty.")
+            self.event_publisher.publish(
+                MasteringFailed(
+                    correlation_id=run_correlation_id,
+                    payload_summary={"stage": "ingest", "error": str(error)},
+                )
+            )
+            raise error
         if not reference_bytes:
-            raise ValueError("Reference audio is empty.")
+            error = ValueError("Reference audio is empty.")
+            self.event_publisher.publish(
+                MasteringFailed(
+                    correlation_id=run_correlation_id,
+                    payload_summary={"stage": "ingest", "error": str(error)},
+                )
+            )
+            raise error
 
-        validate_audio_bytes(target_bytes, filename="target.wav")
-        validate_audio_bytes(reference_bytes, filename="reference.wav")
+        target_metadata = validate_audio_bytes(target_bytes, filename="target.wav")
+        reference_metadata = validate_audio_bytes(reference_bytes, filename="reference.wav")
+        self.event_publisher.publish(
+            IngestValidated(
+                correlation_id=run_correlation_id,
+                payload_summary={
+                    "target": {
+                        "sample_rate_hz": target_metadata.sample_rate_hz,
+                        "channel_count": target_metadata.channel_count,
+                        "duration_seconds": target_metadata.duration_seconds,
+                    },
+                    "reference": {
+                        "sample_rate_hz": reference_metadata.sample_rate_hz,
+                        "channel_count": reference_metadata.channel_count,
+                        "duration_seconds": reference_metadata.duration_seconds,
+                    },
+                },
+            )
+        )
 
         with temporary_wav_path() as target_path, temporary_wav_path() as reference_path, temporary_wav_path() as output_path:
             target_path.write_bytes(target_bytes)
@@ -148,22 +254,34 @@ class MasterTrackAgainstReference:
             normalized_target = normalize_audio(target_audio, target_sample_rate, policy=self.normalization_policy)
             normalized_reference = normalize_audio(reference_audio, reference_sample_rate, policy=self.normalization_policy)
 
-            self.master_to_path(
-                target_audio=normalized_target.audio,
-                reference_audio=normalized_reference.audio,
-                sample_rate=normalized_target.sample_rate_hz,
-                output_path=output_path,
-                eq_mode=eq_mode,
-                eq_preset=eq_preset,
-            )
-            return output_path.read_bytes()
+            try:
+                self.master_to_path(
+                    target_audio=normalized_target.audio,
+                    reference_audio=normalized_reference.audio,
+                    sample_rate=normalized_target.sample_rate_hz,
+                    output_path=output_path,
+                    correlation_id=run_correlation_id,
+                    eq_mode=eq_mode,
+                    eq_preset=eq_preset,
+                )
+                return output_path.read_bytes()
+            except Exception as error:  # noqa: BLE001
+                self.event_publisher.publish(
+                    MasteringFailed(
+                        correlation_id=run_correlation_id,
+                        payload_summary={"stage": "pipeline", "error": str(error)},
+                    )
+                )
+                raise
 
     def master_file(
         self,
         request: MasteringRequest,
+        correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
     ) -> Path:
+        run_correlation_id = correlation_id or str(uuid4())
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with temporary_wav_path() as target_path, temporary_wav_path() as reference_path:
@@ -181,10 +299,9 @@ class MasterTrackAgainstReference:
                 reference_audio=normalized_reference.audio,
                 sample_rate=normalized_target.sample_rate_hz,
                 output_path=request.output_path,
+                correlation_id=run_correlation_id,
                 eq_mode=eq_mode,
                 eq_preset=eq_preset,
             )
 
-        output_audio, output_sample_rate = load_audio_file(request.output_path)
-        request.target_asset.integrated_lufs = measure_integrated_lufs(output_audio, output_sample_rate)
         return request.output_path
