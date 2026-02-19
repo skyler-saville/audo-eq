@@ -117,9 +117,17 @@ def _parse_metadata(raw_bytes: bytes) -> AudioMetadata:
         return _parse_wav(raw_bytes)
     if raw_bytes.startswith(b"fLaC"):
         return _parse_flac(raw_bytes)
-    if raw_bytes.startswith(b"ID3") or raw_bytes[:1] == b"\xFF":
+    if raw_bytes.startswith(b"ID3") or _looks_like_mp3(raw_bytes):
         return _parse_mp3(raw_bytes)
     raise IngestValidationError("unsupported_container", "Unsupported or unrecognized audio container.")
+
+
+def _looks_like_mp3(raw_bytes: bytes) -> bool:
+    search_end = min(len(raw_bytes) - 4, 8192)
+    for offset in range(max(search_end + 1, 0)):
+        if _try_parse_mp3_header(raw_bytes[offset : offset + 4]) is not None:
+            return True
+    return False
 
 
 def _parse_wav(raw_bytes: bytes) -> AudioMetadata:
@@ -171,48 +179,31 @@ def _parse_flac(raw_bytes: bytes) -> AudioMetadata:
 
 def _parse_mp3(raw_bytes: bytes) -> AudioMetadata:
     if len(raw_bytes) < 4:
-        raise IngestValidationError("corrupted_file", "Corrupted MP3 header.")
+        raise IngestValidationError("mp3_malformed_header", "Truncated MP3 header.")
 
-    offset = 0
-    if raw_bytes.startswith(b"ID3"):
-        if len(raw_bytes) < 10:
-            raise IngestValidationError("corrupted_file", "Corrupted ID3v2 tag.")
-        id3_size = (
-            ((raw_bytes[6] & 0x7F) << 21)
-            | ((raw_bytes[7] & 0x7F) << 14)
-            | ((raw_bytes[8] & 0x7F) << 7)
-            | (raw_bytes[9] & 0x7F)
-        )
-        offset = 10 + id3_size
-        if raw_bytes[5] & 0x10:
-            offset += 10
+    offset = _skip_id3v2(raw_bytes)
 
     search_end = min(len(raw_bytes) - 4, offset + 8192)
-    header = None
+    header_fields = None
     header_offset = offset
     while header_offset <= search_end:
-        if raw_bytes[header_offset] == 0xFF and (raw_bytes[header_offset + 1] & 0xE0) == 0xE0:
-            candidate = int.from_bytes(raw_bytes[header_offset : header_offset + 4], "big")
-            if ((candidate >> 21) & 0x7FF) == 0x7FF:
-                version_id = (candidate >> 19) & 0x3
-                layer = (candidate >> 17) & 0x3
-                bitrate_idx = (candidate >> 12) & 0xF
-                sample_idx = (candidate >> 10) & 0x3
-                if version_id != 0x1 and layer != 0x0 and bitrate_idx not in (0, 0xF) and sample_idx != 0x3:
-                    header = candidate
-                    break
+        header_fields = _try_parse_mp3_header(raw_bytes[header_offset : header_offset + 4])
+        if header_fields is not None:
+            break
         header_offset += 1
 
-    if header is None:
-        raise IngestValidationError("no_valid_frame", "No valid MP3 frame header found.")
+    if header_fields is None:
+        raise IngestValidationError(
+            "mp3_malformed_header",
+            "No valid MPEG audio frame header found after metadata.",
+        )
 
-    version_id = (header >> 19) & 0x3
-    layer = (header >> 17) & 0x3
-    bitrate_idx = (header >> 12) & 0xF
-    sample_idx = (header >> 10) & 0x3
-    channel_mode = (header >> 6) & 0x3
+    version_id, layer, bitrate_idx, sample_idx, channel_mode = header_fields
     if version_id != 0x3 or layer != 0x1:
-        raise IngestValidationError("unsupported_codec", "Only MPEG-1 Layer III (MP3) is supported.")
+        raise IngestValidationError(
+            "unsupported_codec_profile",
+            "Unsupported MPEG profile; only MPEG-1 Layer III is supported.",
+        )
     bitrates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
     sample_rates = [44100, 48000, 32000, 0]
     bitrate_kbps = bitrates[bitrate_idx]
@@ -222,3 +213,42 @@ def _parse_mp3(raw_bytes: bytes) -> AudioMetadata:
     channels = 1 if channel_mode == 0x3 else 2
     duration_seconds = (len(raw_bytes) * 8) / (bitrate_kbps * 1000)
     return AudioMetadata("mp3", "mpeg1_layer3", duration_seconds, sample_rate, channels, len(raw_bytes))
+
+
+def _skip_id3v2(raw_bytes: bytes) -> int:
+    if not raw_bytes.startswith(b"ID3"):
+        return 0
+    if len(raw_bytes) < 10:
+        raise IngestValidationError("id3_malformed_header", "Truncated ID3v2 header.")
+
+    if any(raw_bytes[i] & 0x80 for i in range(6, 10)):
+        raise IngestValidationError("id3_malformed_header", "Invalid ID3v2 size encoding.")
+
+    id3_size = (
+        ((raw_bytes[6] & 0x7F) << 21)
+        | ((raw_bytes[7] & 0x7F) << 14)
+        | ((raw_bytes[8] & 0x7F) << 7)
+        | (raw_bytes[9] & 0x7F)
+    )
+    offset = 10 + id3_size
+    if raw_bytes[5] & 0x10:
+        offset += 10
+    if offset > len(raw_bytes):
+        raise IngestValidationError("id3_malformed_header", "ID3v2 tag declares data beyond file length.")
+    return offset
+
+
+def _try_parse_mp3_header(header_bytes: bytes) -> tuple[int, int, int, int, int] | None:
+    if len(header_bytes) < 4:
+        return None
+    candidate = int.from_bytes(header_bytes, "big")
+    if ((candidate >> 21) & 0x7FF) != 0x7FF:
+        return None
+    version_id = (candidate >> 19) & 0x3
+    layer = (candidate >> 17) & 0x3
+    bitrate_idx = (candidate >> 12) & 0xF
+    sample_idx = (candidate >> 10) & 0x3
+    channel_mode = (candidate >> 6) & 0x3
+    if version_id == 0x1 or layer == 0x0 or bitrate_idx in (0, 0xF) or sample_idx == 0x3:
+        return None
+    return (version_id, layer, bitrate_idx, sample_idx, channel_mode)
