@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .audio_contract import TARGET_PCM_CHANNEL_COUNT, TARGET_PCM_SAMPLE_RATE_HZ
+from .domain.policies import NormalizationPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,25 +97,24 @@ def normalize_audio(
     audio: np.ndarray,
     sample_rate_hz: int,
     *,
-    target_sample_rate_hz: int = TARGET_PCM_SAMPLE_RATE_HZ,
-    target_channel_count: int = TARGET_PCM_CHANNEL_COUNT,
+    policy: NormalizationPolicy,
 ) -> NormalizationResult:
     """Normalize audio to canonical PCM sample rate/channel/dtype requirements."""
 
     channel_first = _ensure_channel_first(np.asarray(audio))
     float_audio = channel_first.astype(np.float32, copy=False)
 
-    resampled_audio = _resample_linear(float_audio, sample_rate_hz, target_sample_rate_hz)
-    channel_mapped_audio = _convert_channel_layout(resampled_audio, target_channel_count)
+    resampled_audio = _resample_linear(float_audio, sample_rate_hz, policy.target_sample_rate_hz)
+    channel_mapped_audio = _convert_channel_layout(resampled_audio, policy.target_channel_count)
 
     peak_before_clipping = float(np.max(np.abs(channel_mapped_audio))) if channel_mapped_audio.size else 0.0
-    clipped_audio = np.clip(channel_mapped_audio, -1.0, 1.0).astype(np.float32, copy=False)
-    clipped_samples = int(np.count_nonzero(np.abs(channel_mapped_audio) > 1.0))
+    clipped_audio = np.clip(channel_mapped_audio, policy.clip_floor, policy.clip_ceiling).astype(np.float32, copy=False)
+    clipped_samples = int(np.count_nonzero((channel_mapped_audio < policy.clip_floor) | (channel_mapped_audio > policy.clip_ceiling)))
 
     return NormalizationResult(
         audio=clipped_audio,
-        sample_rate_hz=target_sample_rate_hz,
-        channel_count=target_channel_count,
+        sample_rate_hz=policy.target_sample_rate_hz,
+        channel_count=policy.target_channel_count,
         peak_before_clipping=peak_before_clipping,
         clipped_samples=clipped_samples,
     )
