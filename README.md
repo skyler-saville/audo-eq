@@ -30,6 +30,8 @@ The mastering engine uses [Spotify Pedalboard](https://github.com/spotify/pedalb
 
 For a detailed stage-by-stage walkthrough (ingest, analysis, decisioning, loudness targeting, EQ modes, and troubleshooting), see **[docs/mastering-pipeline.md](docs/mastering-pipeline.md)**.
 
+For the domain-driven architecture plan across the next releases, see **[docs/roadmap-ddd.md](docs/roadmap-ddd.md)**.
+
 ## Setup
 
 ```bash
