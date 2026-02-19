@@ -105,6 +105,8 @@ curl -X POST http://127.0.0.1:8000/master \
 | `AUDO_EQ_S3_SECRET_KEY` | `minioadmin` | Secret key for object storage authentication. |
 | `AUDO_EQ_S3_BUCKET` | `audo-eq-mastered` | Bucket where mastered artifacts are written. Buckets are created automatically if missing. |
 | `AUDO_EQ_S3_SECURE` | `false` | Uses HTTPS when `true`; keep `false` for local MinIO over plain HTTP. |
+| `MINIO_API_PORT` | `9000` | Host port published for MinIO's S3 API (`container:9000`). Change this to avoid local collisions with other S3-compatible stacks. |
+| `MINIO_CONSOLE_PORT` | `9001` | Host port published for MinIO Console UI (`container:9001`). Change this to avoid local collisions. |
 | `AUDO_EQ_S3_REGION` (optional) | unset | Optional region value passed to the S3-compatible client. |
 | `COMPOSE_PROJECT_NAME` (optional) | unset | Optional Compose project prefix for container/network names to avoid collisions across multiple stacks. |
 | `COMPOSE_PROFILES` (optional) | unset | Optional Compose profiles selector if you add profile-gated services later. |
@@ -128,12 +130,12 @@ Or configure cascading defaults in `.env` and run a shorter command:
 COMPOSE_FILE=compose.yaml:compose.override.yaml docker compose up --build
 ```
 
-`make dev-up` and `make prod-up` run a preflight port-collision check before starting Compose. You can also run checks directly with `make preflight-dev` or `make preflight-prod`.
+`make dev-up` and `make prod-up` run a preflight port-collision check before starting Compose. Preflight uses `.env.example` as the source of managed `*_PORT` keys and auto-increments conflicting values in `.env` until available ports are found (creating `.env` from `.env.example` if missing). Non-port values in `.env` are left unchanged, and preflight warns if secret-like values still match `.env.example` defaults. You can also run checks directly with `make preflight-dev` or `make preflight-prod`.
 
 This stack also starts a local MinIO server at:
 
-- S3 API: `http://127.0.0.1:9000`
-- MinIO Console: `http://127.0.0.1:9001`
+- S3 API: `http://127.0.0.1:${MINIO_API_PORT:-9000}`
+- MinIO Console: `http://127.0.0.1:${MINIO_CONSOLE_PORT:-9001}`
 
 ### MinIO usage and verification
 
@@ -145,18 +147,18 @@ The Compose stack configures the API and MinIO with matching defaults so mastere
 
 After startup, you can validate uploads end-to-end:
 
-1. Open the MinIO Console (`http://127.0.0.1:9001`) and sign in with the credentials above.
+1. Open the MinIO Console (`http://127.0.0.1:${MINIO_CONSOLE_PORT:-9001}`) and sign in with the credentials above.
 2. Submit a `POST /master` request (see examples above).
 3. Confirm the object appears in `audo-eq-mastered`.
 
 You can also verify from the command line with the MinIO Client (`mc`) if installed locally:
 
 ```bash
-mc alias set local http://127.0.0.1:9000 minioadmin minioadmin
+mc alias set local http://127.0.0.1:${MINIO_API_PORT:-9000} minioadmin minioadmin
 mc ls local/audo-eq-mastered
 ```
 
-If your environment already has another S3 service on port `9000`, update `.env` (`AUDO_EQ_S3_ENDPOINT`) and the published Compose ports before startup.
+If your environment already has another local service on `9000`/`9001`, update `.env` (`MINIO_API_PORT`, `MINIO_CONSOLE_PORT`) before startup.
 
 ### Production-style startup
 

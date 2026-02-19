@@ -22,6 +22,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check for host port collisions before docker compose up")
     parser.add_argument("--env-file", default=".env", help="Path to env file used by docker compose")
     parser.add_argument(
+        "--example-file",
+        default=".env.example",
+        help="Path to env template used when creating env file",
+    )
+    parser.add_argument(
         "--mode",
         choices=["dev", "prod"],
         default="dev",
@@ -116,8 +121,13 @@ def listening_tcp_ports() -> set[int]:
     ports: set[int] = set()
 
     # Linux path: ss is fast and typically available.
-    ss = subprocess.run(["ss", "-Htanl"], capture_output=True, text=True)
-    if ss.returncode == 0:
+    try:
+        ss = subprocess.run(["ss", "-Htanl"], capture_output=True, text=True, timeout=3)
+    except subprocess.TimeoutExpired:
+        ss = None
+
+    # Some restricted environments return non-zero but still print listener data.
+    if ss and ss.stdout.strip():
         for line in ss.stdout.splitlines():
             cols = line.split()
             if len(cols) < 4:
@@ -130,11 +140,15 @@ def listening_tcp_ports() -> set[int]:
         return ports
 
     # Cross-platform fallback (macOS/BSD/Linux): lsof listener listing.
-    lsof = subprocess.run(
-        ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        lsof = subprocess.run(
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return ports
     if lsof.returncode == 0:
         for line in lsof.stdout.splitlines()[1:]:
             match = re.search(r":(\d+)\s+\(LISTEN\)$", line)
@@ -155,19 +169,165 @@ def is_port_free(port: int, active_ports: set[int]) -> bool:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", port))
     except OSError as exc:
-        if exc.errno in {errno.EADDRINUSE, errno.EPERM, errno.EACCES}:
+        if exc.errno == errno.EADDRINUSE:
             return False
+        if exc.errno in {errno.EPERM, errno.EACCES}:
+            # Restricted environments may forbid bind probes; trust active scan.
+            return True
         return False
 
     return True
 
 
+def next_available_port(start: int, active_ports: set[int], reserved: set[int]) -> int:
+    candidate = start
+    while not is_port_free(candidate, active_ports) or candidate in reserved:
+        candidate += 1
+    return candidate
+
+
+def env_port_keys_from_example(example_file: str) -> set[str]:
+    if not os.path.exists(example_file):
+        print(f"ERROR: env template not found: {example_file}", file=sys.stderr)
+        sys.exit(2)
+    with open(example_file, "r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+    keys: set[str] = set()
+    for line in lines:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+        if not match:
+            continue
+        key, raw_value = match.groups()
+        if key.endswith("_PORT") and raw_value.strip().isdigit():
+            keys.add(key)
+    return keys
+
+
+def parse_env_kv_lines(lines: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in lines:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+        if not match:
+            continue
+        key, raw_value = match.groups()
+        values[key] = raw_value.strip()
+    return values
+
+
+def looks_like_secret_key(key: str) -> bool:
+    secret_markers = (
+        "SECRET",
+        "PASSWORD",
+        "TOKEN",
+        "API_KEY",
+        "ACCESS_KEY",
+        "PRIVATE_KEY",
+    )
+    return any(marker in key for marker in secret_markers)
+
+
+def warn_on_example_secret_values(env_file: str, example_file: str) -> None:
+    with open(example_file, "r", encoding="utf-8") as handle:
+        example_values = parse_env_kv_lines(handle.readlines())
+    with open(env_file, "r", encoding="utf-8") as handle:
+        env_values = parse_env_kv_lines(handle.readlines())
+
+    matches: list[str] = []
+    for key, example_value in example_values.items():
+        if not looks_like_secret_key(key):
+            continue
+        if not example_value:
+            continue
+        env_value = env_values.get(key)
+        if env_value is None:
+            continue
+        if env_value == example_value:
+            matches.append(key)
+
+    if matches:
+        print("SECURITY WARNING: .env contains secret-like values that match .env.example defaults:")
+        for key in matches:
+            print(f"  - {key}")
+        print("Suggestion: replace these values in .env with unique, non-default secrets.")
+
+
+def rewrite_env_ports(
+    env_file: str,
+    lines: list[str],
+    active_ports: set[int],
+    port_keys: set[str],
+    action_label: str,
+) -> None:
+    output_lines: list[str] = []
+    changed_ports: list[tuple[str, int, int]] = []
+    reserved: set[int] = set()
+
+    for line in lines:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+        if not match:
+            output_lines.append(line)
+            continue
+
+        key, raw_value = match.groups()
+        value = raw_value.strip()
+        if key in port_keys and value.isdigit():
+            original_port = int(value)
+            selected_port = next_available_port(original_port, active_ports, reserved)
+            reserved.add(selected_port)
+            if selected_port != original_port:
+                changed_ports.append((key, original_port, selected_port))
+            output_lines.append(f"{key}={selected_port}\n")
+            continue
+
+        output_lines.append(line)
+
+    with open(env_file, "w", encoding="utf-8") as handle:
+        handle.writelines(output_lines)
+
+    print(action_label)
+    if changed_ports:
+        for key, old, new in changed_ports:
+            print(f"Adjusted {key}: {old} -> {new} (port in use)")
+    else:
+        print("No port adjustments needed.")
+
+
+def ensure_env_ports(env_file: str, example_file: str, active_ports: set[int]) -> None:
+    port_keys = env_port_keys_from_example(example_file)
+
+    if os.path.exists(env_file):
+        with open(env_file, "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+        rewrite_env_ports(
+            env_file=env_file,
+            lines=lines,
+            active_ports=active_ports,
+            port_keys=port_keys,
+            action_label=f"Updated {env_file} port assignments from existing file.",
+        )
+        return
+
+    with open(example_file, "r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+    rewrite_env_ports(
+        env_file=env_file,
+        lines=lines,
+        active_ports=active_ports,
+        port_keys=port_keys,
+        action_label=f"Created {env_file} from {example_file}.",
+    )
+
+
 def main() -> int:
     args = parse_args()
+
+    active_ports = listening_tcp_ports()
+    ensure_env_ports(args.env_file, args.example_file, active_ports)
 
     if not os.path.exists(args.env_file):
         print(f"ERROR: env file not found: {args.env_file}", file=sys.stderr)
         return 2
+    warn_on_example_secret_values(args.env_file, args.example_file)
 
     compose_config = load_compose_config(args.env_file, args.mode)
     ports = collect_published_ports(compose_config)
@@ -176,7 +336,6 @@ def main() -> int:
         print(f"No published host ports detected for mode={args.mode}.")
         return 0
 
-    active_ports = listening_tcp_ports()
     busy = [port for port in ports if not is_port_free(port, active_ports)]
 
     print(f"Checked published host ports for mode={args.mode}: {', '.join(map(str, ports))}")

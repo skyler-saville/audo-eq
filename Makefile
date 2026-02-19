@@ -51,10 +51,10 @@ frontend: ## Run Flask frontend with API URL from .env/.make vars.
 	AUDO_EQ_FRONTEND_PORT=$(AUDO_EQ_FRONTEND_PORT) \
 	$(POETRY) run audo-eq-frontend
 
-preflight-dev: ensure-env ## Check dev compose host ports for collisions.
+preflight-dev: ## Ensure env + check dev compose host ports for collisions.
 	$(PORT_CHECK) --env-file $(ENV_FILE) --mode dev
 
-preflight-prod: ensure-env ## Check prod compose host ports for collisions.
+preflight-prod: ## Ensure env + check prod compose host ports for collisions.
 	$(PORT_CHECK) --env-file $(ENV_FILE) --mode prod
 
 dev-up: preflight-dev ## Start Docker Compose in local development mode.
