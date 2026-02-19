@@ -19,7 +19,19 @@ from .analysis import EqBandCorrection
 from .decision import DecisionPayload
 from .mastering_options import EqMode, EqPreset
 
-_POST_LIMITER_LUFS_TOLERANCE = 0.3
+@dataclass(frozen=True, slots=True)
+class LoudnessTuning:
+    """Tunable constants for loudness target correction around limiting."""
+
+    post_limiter_lufs_tolerance: float
+    max_post_limiter_correction_db: float
+
+
+LOUDNESS_TUNINGS: dict[str, LoudnessTuning] = {
+    "default": LoudnessTuning(post_limiter_lufs_tolerance=0.3, max_post_limiter_correction_db=1.5),
+    "conservative": LoudnessTuning(post_limiter_lufs_tolerance=0.45, max_post_limiter_correction_db=1.0),
+    "aggressive": LoudnessTuning(post_limiter_lufs_tolerance=0.2, max_post_limiter_correction_db=2.0),
+}
 
 @dataclass(frozen=True, slots=True)
 class EqPresetTuning:
@@ -44,6 +56,36 @@ EQ_PRESET_TUNINGS: dict[EqPreset, EqPresetTuning] = {
     ),
     EqPreset.BASS_BOOST: EqPresetTuning(low_shelf_offset_db=2.0, high_shelf_offset_db=-0.5, low_band_bias_db=0.8),
 }
+
+EQ_PRESET_TO_PROFILE: dict[EqPreset, str] = {
+    EqPreset.NEUTRAL: "default",
+    EqPreset.WARM: "conservative",
+    EqPreset.BRIGHT: "aggressive",
+    EqPreset.VOCAL_PRESENCE: "default",
+    EqPreset.BASS_BOOST: "aggressive",
+}
+
+MASTERING_PROFILE_ALIASES: dict[str, str] = {
+    "reference-mastering-default": "default",
+    "reference-mastering-conservative": "conservative",
+    "reference-mastering-aggressive": "aggressive",
+}
+
+
+def resolve_mastering_profile(eq_preset: EqPreset, mastering_profile: str | None = None) -> str:
+    if mastering_profile is not None:
+        normalized = mastering_profile.strip().lower()
+        if normalized in MASTERING_PROFILE_ALIASES:
+            return MASTERING_PROFILE_ALIASES[normalized]
+        if normalized in LOUDNESS_TUNINGS:
+            return normalized
+        allowed = ", ".join(sorted(LOUDNESS_TUNINGS))
+        raise ValueError(f"Unknown mastering profile '{mastering_profile}'. Allowed: {allowed}.")
+    return EQ_PRESET_TO_PROFILE[eq_preset]
+
+
+def resolve_loudness_tuning(profile: str) -> LoudnessTuning:
+    return LOUDNESS_TUNINGS[profile]
 
 
 def _audio_for_loudness_measurement(audio: np.ndarray) -> np.ndarray:
@@ -150,6 +192,7 @@ def apply_processing(
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
+    mastering_profile: str | None = None,
 ) -> np.ndarray:
     """Apply the constructed DSP chain to target audio."""
 
@@ -171,9 +214,12 @@ def apply_processing_with_loudness_target(
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
+    mastering_profile: str | None = None,
 ) -> np.ndarray:
     """Apply mastering chain with loudness targeting around the final limiter."""
 
+    profile = resolve_mastering_profile(eq_preset=eq_preset, mastering_profile=mastering_profile)
+    loudness_tuning = resolve_loudness_tuning(profile)
     tuning = EQ_PRESET_TUNINGS[eq_preset]
 
     pre_limiter_plugins = [
@@ -206,8 +252,14 @@ def apply_processing_with_loudness_target(
     limited_audio = limiter(pre_limiter_audio, sample_rate)
 
     final_lufs = measure_integrated_lufs(limited_audio, sample_rate)
-    correction_db = float(np.clip(target_lufs - final_lufs, -1.5, 1.5))
-    if abs(correction_db) < _POST_LIMITER_LUFS_TOLERANCE:
+    correction_db = float(
+        np.clip(
+            target_lufs - final_lufs,
+            -loudness_tuning.max_post_limiter_correction_db,
+            loudness_tuning.max_post_limiter_correction_db,
+        )
+    )
+    if abs(correction_db) < loudness_tuning.post_limiter_lufs_tolerance:
         return limited_audio
 
     post_gain = Gain(gain_db=correction_db)

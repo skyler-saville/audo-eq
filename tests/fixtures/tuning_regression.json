@@ -1,0 +1,137 @@
+{
+  "sample_rate": 48000,
+  "profiles": {
+    "default": {
+      "eq_band_corrections": [
+        {
+          "center_hz": 84.852814,
+          "delta_db": -2.826681
+        },
+        {
+          "center_hz": 173.205081,
+          "delta_db": -4.0
+        },
+        {
+          "center_hz": 353.553391,
+          "delta_db": -2.826681
+        },
+        {
+          "center_hz": 707.106781,
+          "delta_db": 1.258666
+        },
+        {
+          "center_hz": 1414.213562,
+          "delta_db": 2.517331
+        },
+        {
+          "center_hz": 2828.427125,
+          "delta_db": 4.0
+        },
+        {
+          "center_hz": 5656.854249,
+          "delta_db": 4.0
+        },
+        {
+          "center_hz": 11313.708499,
+          "delta_db": 4.0
+        }
+      ],
+      "decision": {
+        "gain_db": -0.173901,
+        "low_shelf_gain_db": -3.0,
+        "high_shelf_gain_db": 3.0,
+        "compressor_threshold_db": -23.805484,
+        "compressor_ratio": 2.2,
+        "limiter_ceiling_db": -1.0
+      }
+    },
+    "conservative": {
+      "eq_band_corrections": [
+        {
+          "center_hz": 84.852814,
+          "delta_db": -2.261345
+        },
+        {
+          "center_hz": 173.205081,
+          "delta_db": -3.0
+        },
+        {
+          "center_hz": 353.553391,
+          "delta_db": -2.261345
+        },
+        {
+          "center_hz": 707.106781,
+          "delta_db": 1.006932
+        },
+        {
+          "center_hz": 1414.213562,
+          "delta_db": 3.0
+        },
+        {
+          "center_hz": 2828.427125,
+          "delta_db": 3.0
+        },
+        {
+          "center_hz": 5656.854249,
+          "delta_db": 3.0
+        },
+        {
+          "center_hz": 11313.708499,
+          "delta_db": 3.0
+        }
+      ],
+      "decision": {
+        "gain_db": -0.173901,
+        "low_shelf_gain_db": -2.25,
+        "high_shelf_gain_db": 2.25,
+        "compressor_threshold_db": -21.203656,
+        "compressor_ratio": 1.9,
+        "limiter_ceiling_db": -1.1
+      }
+    },
+    "aggressive": {
+      "eq_band_corrections": [
+        {
+          "center_hz": 84.852814,
+          "delta_db": -3.392017
+        },
+        {
+          "center_hz": 173.205081,
+          "delta_db": -4.52269
+        },
+        {
+          "center_hz": 353.553391,
+          "delta_db": -3.392017
+        },
+        {
+          "center_hz": 707.106781,
+          "delta_db": 1.510399
+        },
+        {
+          "center_hz": 1414.213562,
+          "delta_db": 2.013865
+        },
+        {
+          "center_hz": 2828.427125,
+          "delta_db": 5.5
+        },
+        {
+          "center_hz": 5656.854249,
+          "delta_db": 5.5
+        },
+        {
+          "center_hz": 11313.708499,
+          "delta_db": 5.5
+        }
+      ],
+      "decision": {
+        "gain_db": -0.173901,
+        "low_shelf_gain_db": -4.0,
+        "high_shelf_gain_db": 4.0,
+        "compressor_threshold_db": -26.256855,
+        "compressor_ratio": 2.6,
+        "limiter_ceiling_db": -0.9
+      }
+    }
+  }
+}
