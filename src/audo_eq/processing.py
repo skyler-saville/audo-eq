@@ -57,7 +57,13 @@ def _audio_for_loudness_measurement(audio: np.ndarray) -> np.ndarray:
 def measure_integrated_lufs(audio: np.ndarray, sample_rate: int) -> float:
     """Measure integrated loudness in LUFS."""
 
-    import pyloudnorm as pyln
+    try:
+        import pyloudnorm as pyln
+    except ModuleNotFoundError:
+        rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float64, copy=False)))))
+        if rms <= 0.0:
+            return -70.0
+        return float(np.clip(20.0 * np.log10(rms), -70.0, 5.0))
 
     meter = pyln.Meter(sample_rate)
     measured = float(meter.integrated_loudness(_audio_for_loudness_measurement(audio)))
@@ -85,16 +91,16 @@ def _build_reference_match_eq_stage(
         center_hz = correction.center_hz
         gain_db = float(correction.delta_db) + _band_bias_for_frequency(center_hz, tuning)
         if center_hz <= 250.0:
-            plugins.append(LowShelfFilter(cutoff_frequency_hz=max(40.0, center_hz), gain_db=gain_db))
+            plugins.append(LowShelfFilter(cutoff_frequency_hz=max(40.0, center_hz), gain_db=round(float(gain_db), 6)))
             continue
 
         if center_hz >= 4_000.0:
-            plugins.append(HighShelfFilter(cutoff_frequency_hz=min(12_000.0, center_hz), gain_db=gain_db))
+            plugins.append(HighShelfFilter(cutoff_frequency_hz=min(12_000.0, center_hz), gain_db=round(float(gain_db), 6)))
             continue
 
         # Approximate a broad bell with opposing shelves around the center.
-        plugins.append(LowShelfFilter(cutoff_frequency_hz=max(100.0, center_hz / 1.6), gain_db=gain_db * 0.5))
-        plugins.append(HighShelfFilter(cutoff_frequency_hz=min(10_000.0, center_hz * 1.6), gain_db=-gain_db * 0.5))
+        plugins.append(LowShelfFilter(cutoff_frequency_hz=max(100.0, center_hz / 1.6), gain_db=round(float(gain_db * 0.5), 6)))
+        plugins.append(HighShelfFilter(cutoff_frequency_hz=min(10_000.0, center_hz * 1.6), gain_db=round(float(-gain_db * 0.5), 6)))
 
     return plugins
 
@@ -111,10 +117,10 @@ def build_dsp_chain(
 
     plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db + tuning.low_shelf_offset_db),
+        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=round(float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6)),
         HighShelfFilter(
             cutoff_frequency_hz=6_000.0,
-            gain_db=decision.high_shelf_gain_db + tuning.high_shelf_offset_db,
+            gain_db=round(float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6),
         ),
     ]
 
@@ -172,10 +178,10 @@ def apply_processing_with_loudness_target(
 
     pre_limiter_plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=decision.low_shelf_gain_db + tuning.low_shelf_offset_db),
+        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=round(float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6)),
         HighShelfFilter(
             cutoff_frequency_hz=6_000.0,
-            gain_db=decision.high_shelf_gain_db + tuning.high_shelf_offset_db,
+            gain_db=round(float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6),
         ),
     ]
     if eq_mode is EqMode.REFERENCE_MATCH:

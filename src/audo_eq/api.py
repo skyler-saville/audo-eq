@@ -5,12 +5,14 @@ from uuid import uuid4
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
-from .core import _asset_from_metadata, master_bytes
-from .ingest_validation import IngestValidationError, validate_audio_bytes
+from .interfaces.api_handlers import IngestValidationError, build_asset, master_uploaded_bytes
 from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
-from .storage import StorageWriteError, store_mastered_audio
+from .infrastructure.minio_storage import StorageWriteError, store_mastered_audio
 
 app = FastAPI(title="Audo_EQ API", version="0.1.0")
+
+# Compatibility alias used by tests and legacy patch points.
+master_bytes = master_uploaded_bytes
 
 
 @app.get("/health")
@@ -57,15 +59,11 @@ async def master(
 
     try:
         target_bytes = await target.read()
-        target_meta = validate_audio_bytes(target_bytes, filename=target.filename)
-        target_asset = _asset_from_metadata(
-            f"upload://{target.filename or 'target'}", target_bytes, target_meta
-        )
+        target_asset = build_asset(f"upload://{target.filename or 'target'}", target_bytes, target.filename)
 
         reference_bytes = await reference.read()
-        reference_meta = validate_audio_bytes(reference_bytes, filename=reference.filename)
-        reference_asset = _asset_from_metadata(
-            f"upload://{reference.filename or 'reference'}", reference_bytes, reference_meta
+        reference_asset = build_asset(
+            f"upload://{reference.filename or 'reference'}", reference_bytes, reference.filename
         )
     except IngestValidationError as error:
         status = 415 if error.code in {"unsupported_container", "unsupported_codec"} else 400
