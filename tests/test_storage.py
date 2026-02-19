@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from audo_eq import storage
 
 
@@ -47,3 +49,32 @@ def test_store_mastered_audio_enabled(monkeypatch) -> None:
     assert url == "https://storage.local/unit-test-bucket/mastered/file.wav"
     assert "unit-test-bucket" in fake_client.buckets
     assert fake_client.put_calls == [("unit-test-bucket", "mastered/file.wav", 3, "audio/wav")]
+
+
+def test_store_mastered_audio_non_strict_returns_none_on_storage_error(monkeypatch) -> None:
+    _reset_caches()
+    monkeypatch.setenv("AUDO_EQ_STORAGE_ENABLED", "true")
+    monkeypatch.setenv("AUDO_EQ_STORAGE_STRICT", "false")
+
+    class _FailingClient(_FakeMinioClient):
+        def put_object(self, bucket_name: str, object_name: str, data, length: int, content_type: str) -> None:
+            raise RuntimeError("write failed")
+
+    monkeypatch.setattr(storage, "get_storage_client", lambda: _FailingClient())
+
+    assert storage.store_mastered_audio(object_name="mastered/file.wav", audio_bytes=b"abc") is None
+
+
+def test_store_mastered_audio_strict_raises_on_storage_error(monkeypatch) -> None:
+    _reset_caches()
+    monkeypatch.setenv("AUDO_EQ_STORAGE_ENABLED", "true")
+    monkeypatch.setenv("AUDO_EQ_STORAGE_STRICT", "true")
+
+    class _FailingClient(_FakeMinioClient):
+        def put_object(self, bucket_name: str, object_name: str, data, length: int, content_type: str) -> None:
+            raise RuntimeError("write failed")
+
+    monkeypatch.setattr(storage, "get_storage_client", lambda: _FailingClient())
+
+    with pytest.raises(storage.StorageWriteError):
+        storage.store_mastered_audio(object_name="mastered/file.wav", audio_bytes=b"abc")
