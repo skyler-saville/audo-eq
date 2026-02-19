@@ -4,7 +4,7 @@ from pathlib import Path
 
 import typer
 
-from .core import ingest_local_mastering_request, master_file
+from .interfaces.cli_handlers import master_from_paths
 from .mastering_options import EqMode, EqPreset
 
 app = typer.Typer(help="Audo_EQ command line interface")
@@ -30,8 +30,7 @@ def master_command(
 ) -> None:
     """Master a target audio file against a reference file."""
 
-    request = ingest_local_mastering_request(target, reference, output)
-    written = master_file(request, eq_mode=eq_mode, eq_preset=eq_preset)
+    written = master_from_paths(target, reference, output, eq_mode=eq_mode, eq_preset=eq_preset)
     typer.echo(f"Mastered audio written to: {written}")
 
 
