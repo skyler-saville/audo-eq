@@ -93,3 +93,55 @@ def test_strategy_policy_modifies_decision_output() -> None:
 
     assert corrective.limiter_ceiling_db < baseline.limiter_ceiling_db
     assert corrective.de_esser_depth_db >= baseline.de_esser_depth_db
+
+
+def test_decide_mastering_advanced_mode_defaults_to_disabled() -> None:
+    analysis = AnalysisPayload(
+        target=_metrics(
+            low_band_energy=0.3,
+            high_band_energy=0.31,
+            sibilance_ratio=0.12,
+            crest_factor_db=8.5,
+        ),
+        reference=_metrics(
+            low_band_energy=0.2,
+            high_band_energy=0.2,
+            sibilance_ratio=0.08,
+            crest_factor_db=10.5,
+        ),
+        eq_band_corrections=tuple(),
+    )
+
+    decision = decide_mastering(analysis)
+
+    assert not decision.multiband_compression_enabled
+    assert not decision.dynamic_eq_enabled
+    assert not decision.stereo_ms_correction_enabled
+
+
+def test_decide_mastering_populates_advanced_fields_when_enabled() -> None:
+    analysis = AnalysisPayload(
+        target=_metrics(
+            low_band_energy=0.35,
+            high_band_energy=0.38,
+            sibilance_ratio=0.16,
+            crest_factor_db=8.0,
+        ),
+        reference=_metrics(
+            low_band_energy=0.2,
+            high_band_energy=0.2,
+            sibilance_ratio=0.08,
+            crest_factor_db=11.0,
+        ),
+        eq_band_corrections=tuple(),
+    )
+
+    decision = decide_mastering(analysis, advanced_mode=True)
+
+    assert decision.multiband_compression_enabled
+    assert decision.multiband_low_ratio > 1.0
+    assert decision.multiband_mid_ratio > 1.0
+    assert decision.multiband_high_ratio > 1.0
+    assert decision.dynamic_eq_enabled
+    assert decision.dynamic_eq_harsh_attenuation_db > 0.0
+    assert abs(decision.stereo_side_gain_db) >= 0.1

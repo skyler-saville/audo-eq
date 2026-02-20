@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from pedalboard import HighShelfFilter, Limiter, LowShelfFilter
+from pedalboard import Compressor, HighShelfFilter, Limiter, LowShelfFilter
 
 from audo_eq.analysis import EqBandCorrection
 from audo_eq.decision import DecisionPayload
@@ -138,3 +138,38 @@ def test_build_dsp_chain_skips_de_esser_when_off() -> None:
 
     high_shelves = [plugin for plugin in chain if isinstance(plugin, HighShelfFilter)]
     assert len(high_shelves) == 1
+
+
+def test_build_dsp_chain_adds_dynamic_eq_in_advanced_mode() -> None:
+    decision = DecisionPayload(
+        gain_db=1.0,
+        low_shelf_gain_db=0.5,
+        high_shelf_gain_db=-0.5,
+        compressor_threshold_db=-20.0,
+        compressor_ratio=2.0,
+        limiter_ceiling_db=-1.0,
+        dynamic_eq_enabled=True,
+        dynamic_eq_harsh_attenuation_db=2.5,
+    )
+
+    chain = build_dsp_chain(decision, advanced_mode=True)
+
+    high_shelves = [plugin for plugin in chain if isinstance(plugin, HighShelfFilter)]
+    assert any(plugin.gain_db == pytest.approx(-2.5) for plugin in high_shelves)
+
+
+def test_build_dsp_chain_skips_single_band_compressor_with_multiband_mode() -> None:
+    decision = DecisionPayload(
+        gain_db=1.0,
+        low_shelf_gain_db=0.5,
+        high_shelf_gain_db=-0.5,
+        compressor_threshold_db=-20.0,
+        compressor_ratio=2.0,
+        limiter_ceiling_db=-1.0,
+        multiband_compression_enabled=True,
+    )
+
+    chain = build_dsp_chain(decision, advanced_mode=True)
+
+    compressors = [plugin for plugin in chain if isinstance(plugin, Compressor)]
+    assert len(compressors) == 0
