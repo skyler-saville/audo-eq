@@ -160,10 +160,19 @@ class MasterTrackAgainstReference:
                     "rms_delta_db": analysis.rms_delta_db,
                     "centroid_delta_hz": analysis.centroid_delta_hz,
                     "eq_band_count": len(analysis.eq_band_corrections),
+                    "target_temporal_frames": len(
+                        analysis.target_temporal.frame_times_s
+                    ),
+                    "reference_temporal_frames": len(
+                        analysis.reference_temporal.frame_times_s
+                    ),
                 },
             )
         )
-        decision = decide_mastering(analysis, profile=mastering_profile_name)
+        decision = decide_mastering(
+            analysis=analysis,
+            profile=mastering_profile_name,
+        )
         self.event_publisher.publish(
             MasteringDecided(
                 correlation_id=run_correlation_id,

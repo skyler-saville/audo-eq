@@ -25,6 +25,7 @@ def _metrics() -> TrackMetrics:
         low_band_energy=0.2,
         mid_band_energy=0.5,
         high_band_energy=0.3,
+        sibilance_ratio=0.08,
         crest_factor_db=12.0,
         is_clipping=False,
         is_silent=False,
