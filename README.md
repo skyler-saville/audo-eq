@@ -30,6 +30,8 @@ The mastering engine uses [Spotify Pedalboard](https://github.com/spotify/pedalb
 
 For a detailed stage-by-stage walkthrough (ingest, analysis, decisioning, loudness targeting, EQ modes, and troubleshooting), see **[docs/mastering-pipeline.md](docs/mastering-pipeline.md)**.
 
+For the HTTP endpoint contract (request/response formats, error schema, and persistence behavior matrix), see **[docs/api-contract.md](docs/api-contract.md)**.
+
 For the domain-driven architecture plan across the next releases, see **[docs/roadmap-ddd.md](docs/roadmap-ddd.md)**.
 
 ## Setup
@@ -221,6 +223,8 @@ Then call:
 - `POST /master` with multipart form fields:
   - `target`: target audio file
   - `reference`: reference audio file
+
+FastAPI also exposes generated OpenAPI docs at `/openapi.json`, Swagger UI at `/docs`, and ReDoc at `/redoc`.
 
 Example curl:
 
