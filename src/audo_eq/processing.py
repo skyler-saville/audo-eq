@@ -27,10 +27,25 @@ class LoudnessTuning:
     max_post_limiter_correction_db: float
 
 
+@dataclass(frozen=True, slots=True)
+class TruePeakTuning:
+    """Tunable constants for post-limiter true-peak guard behavior."""
+
+    target_dbtp: float
+    tolerance_db: float
+    oversample_factor: int = 4
+
+
 LOUDNESS_TUNINGS: dict[str, LoudnessTuning] = {
     "default": LoudnessTuning(post_limiter_lufs_tolerance=0.3, max_post_limiter_correction_db=1.5),
     "conservative": LoudnessTuning(post_limiter_lufs_tolerance=0.45, max_post_limiter_correction_db=1.0),
     "aggressive": LoudnessTuning(post_limiter_lufs_tolerance=0.2, max_post_limiter_correction_db=2.0),
+}
+
+TRUE_PEAK_TUNINGS: dict[str, TruePeakTuning] = {
+    "default": TruePeakTuning(target_dbtp=-1.0, tolerance_db=0.1, oversample_factor=4),
+    "conservative": TruePeakTuning(target_dbtp=-1.2, tolerance_db=0.08, oversample_factor=4),
+    "aggressive": TruePeakTuning(target_dbtp=-0.8, tolerance_db=0.12, oversample_factor=4),
 }
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +103,10 @@ def resolve_loudness_tuning(profile: str) -> LoudnessTuning:
     return LOUDNESS_TUNINGS[profile]
 
 
+def resolve_true_peak_tuning(profile: str) -> TruePeakTuning:
+    return TRUE_PEAK_TUNINGS[profile]
+
+
 def _audio_for_loudness_measurement(audio: np.ndarray) -> np.ndarray:
     """Convert channel-first pedalboard arrays for pyloudnorm."""
 
@@ -112,6 +131,54 @@ def measure_integrated_lufs(audio: np.ndarray, sample_rate: int) -> float:
     if not np.isfinite(measured):
         return -70.0
     return measured
+
+
+def measure_true_peak_dbtp(audio: np.ndarray, oversample_factor: int = 4) -> float:
+    """Estimate true peak (dBTP) using channel-wise oversampling."""
+
+    if oversample_factor < 1:
+        raise ValueError("oversample_factor must be >= 1")
+
+    audio_float = audio.astype(np.float64, copy=False)
+    if audio_float.ndim == 1:
+        channels = (audio_float,)
+    else:
+        channels = tuple(audio_float[channel_index] for channel_index in range(audio_float.shape[0]))
+
+    max_abs_peak = 0.0
+    for channel in channels:
+        if channel.size == 0:
+            continue
+        if oversample_factor == 1 or channel.size == 1:
+            oversampled = channel
+        else:
+            base_positions = np.arange(channel.size, dtype=np.float64)
+            oversampled_positions = np.linspace(0.0, channel.size - 1, channel.size * oversample_factor, dtype=np.float64)
+            oversampled = np.interp(oversampled_positions, base_positions, channel)
+        channel_peak = float(np.max(np.abs(oversampled)))
+        max_abs_peak = max(max_abs_peak, channel_peak)
+
+    if max_abs_peak <= 0.0:
+        return -np.inf
+    return float(20.0 * np.log10(max_abs_peak))
+
+
+def apply_true_peak_guard(
+    audio: np.ndarray,
+    sample_rate: int,
+    limiter: Limiter,
+    tuning: TruePeakTuning,
+) -> np.ndarray:
+    """Apply post-limiter TP guard by gain trim and re-limiting when needed."""
+
+    measured_dbtp = measure_true_peak_dbtp(audio, oversample_factor=tuning.oversample_factor)
+    tp_overshoot_db = measured_dbtp - tuning.target_dbtp
+    if tp_overshoot_db <= tuning.tolerance_db:
+        return audio
+
+    gain_trim_db = -(tp_overshoot_db + tuning.tolerance_db)
+    trimmed_audio = Gain(gain_db=gain_trim_db)(audio, sample_rate)
+    return limiter(trimmed_audio, sample_rate)
 
 
 def _band_bias_for_frequency(center_hz: float, tuning: EqPresetTuning) -> float:
@@ -220,6 +287,7 @@ def apply_processing_with_loudness_target(
 
     profile = resolve_mastering_profile(eq_preset=eq_preset, mastering_profile=mastering_profile)
     loudness_tuning = resolve_loudness_tuning(profile)
+    true_peak_tuning = resolve_true_peak_tuning(profile)
     tuning = EQ_PRESET_TUNINGS[eq_preset]
 
     pre_limiter_plugins = [
@@ -260,8 +328,9 @@ def apply_processing_with_loudness_target(
         )
     )
     if abs(correction_db) < loudness_tuning.post_limiter_lufs_tolerance:
-        return limited_audio
+        return apply_true_peak_guard(limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning)
 
     post_gain = Gain(gain_db=correction_db)
     corrected_audio = post_gain(limited_audio, sample_rate)
-    return limiter(corrected_audio, sample_rate)
+    corrected_limited_audio = limiter(corrected_audio, sample_rate)
+    return apply_true_peak_guard(corrected_limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning)
