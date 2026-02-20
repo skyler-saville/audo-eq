@@ -110,13 +110,25 @@ The design goal is predictable behavior with bounded parameter ranges, avoiding 
 2. Apply limiter.
 3. Measure integrated LUFS post-limiter.
 4. If LUFS misses target beyond tolerance, apply bounded post gain and re-limit.
+5. Measure post-limiter true peak (dBTP) with 4x oversampling and enforce a profile-tuned TP ceiling.
 
 ### Loudness targeting behavior
 
 - Initial loudness delta is based on `reference_lufs - target_lufs` and clamped to a safe range.
 - Post-limiter correction is intentionally bounded, with a tolerance window to avoid micro-adjustment churn.
+- A dedicated true-peak guard runs after loudness correction and trims/re-limits if oversampled peaks exceed the configured `target_dbtp` (profile default: `-1.0 dBTP`).
 
 This gives practical loudness alignment while reducing over-correction artifacts.
+
+### True-peak guard profiles
+
+True-peak behavior is tuned per mastering profile (parallel to loudness tuning):
+
+- `default`: `target_dbtp=-1.0`, `tolerance_db=0.1`, `oversample_factor=4`
+- `conservative`: `target_dbtp=-1.2`, `tolerance_db=0.08`, `oversample_factor=4`
+- `aggressive`: `target_dbtp=-0.8`, `tolerance_db=0.12`, `oversample_factor=4`
+
+These settings are resolved through the same profile selection path used by loudness tuning (`default` / `conservative` / `aggressive`, including profile aliases).
 
 ---
 
