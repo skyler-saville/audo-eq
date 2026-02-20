@@ -112,6 +112,19 @@ class DecisionPayload:
     limiter_ceiling_db: float
     de_esser_threshold: float = 0.0
     de_esser_depth_db: float = 0.0
+    multiband_compression_enabled: bool = False
+    multiband_low_threshold_db: float = -24.0
+    multiband_low_ratio: float = 1.0
+    multiband_mid_threshold_db: float = -24.0
+    multiband_mid_ratio: float = 1.0
+    multiband_high_threshold_db: float = -24.0
+    multiband_high_ratio: float = 1.0
+    dynamic_eq_enabled: bool = False
+    dynamic_eq_harsh_threshold: float = 0.0
+    dynamic_eq_harsh_attenuation_db: float = 0.0
+    stereo_ms_correction_enabled: bool = False
+    stereo_mid_gain_db: float = 0.0
+    stereo_side_gain_db: float = 0.0
 
 
 class StrategyCondition(str, Enum):
@@ -220,6 +233,7 @@ def decide_mastering(
     analysis: AnalysisPayload,
     profile: str = "default",
     strategy: StrategySelection | None = None,
+    advanced_mode: bool = False,
 ) -> DecisionPayload:
     """Translate analysis deltas into DSP parameters."""
 
@@ -278,6 +292,70 @@ def decide_mastering(
         *tuning.de_esser_depth_clamp_db,
     )
 
+    multiband_compression_enabled = False
+    multiband_low_threshold_db = -24.0
+    multiband_low_ratio = 1.0
+    multiband_mid_threshold_db = -24.0
+    multiband_mid_ratio = 1.0
+    multiband_high_threshold_db = -24.0
+    multiband_high_ratio = 1.0
+    dynamic_eq_enabled = False
+    dynamic_eq_harsh_threshold = 0.0
+    dynamic_eq_harsh_attenuation_db = 0.0
+    stereo_ms_correction_enabled = False
+    stereo_mid_gain_db = 0.0
+    stereo_side_gain_db = 0.0
+
+    if advanced_mode:
+        low_excess = max(
+            0.0,
+            analysis.target.low_band_energy - analysis.reference.low_band_energy,
+        )
+        high_excess = max(
+            0.0,
+            analysis.target.high_band_energy - analysis.reference.high_band_energy,
+        )
+        crest_miss = max(
+            0.0,
+            analysis.reference.crest_factor_db - analysis.target.crest_factor_db,
+        )
+
+        multiband_compression_enabled = (
+            low_excess >= 0.04 or high_excess >= 0.04 or crest_miss >= 1.5
+        )
+        multiband_low_threshold_db = _clamp(-26.0 + (low_excess * 30.0), -32.0, -16.0)
+        multiband_low_ratio = _clamp(1.6 + (low_excess * 6.0), 1.2, 4.0)
+        multiband_mid_threshold_db = _clamp(-24.0 + (crest_miss * 1.2), -30.0, -16.0)
+        multiband_mid_ratio = _clamp(1.5 + (crest_miss * 0.45), 1.2, 3.8)
+        multiband_high_threshold_db = _clamp(
+            -25.0 + ((high_excess + analysis.sibilance_ratio_delta) * 25.0),
+            -32.0,
+            -15.0,
+        )
+        multiband_high_ratio = _clamp(
+            1.5 + ((high_excess + analysis.sibilance_ratio_delta) * 8.0), 1.2, 4.2
+        )
+
+        dynamic_eq_harsh_threshold = _clamp(
+            analysis.reference.high_band_energy + 0.02,
+            0.04,
+            0.35,
+        )
+        harsh_excess = max(
+            0.0,
+            analysis.target.high_band_energy - dynamic_eq_harsh_threshold,
+        ) + max(0.0, analysis.sibilance_ratio_delta)
+        dynamic_eq_harsh_attenuation_db = _clamp(harsh_excess * 22.0, 0.0, 4.5)
+        dynamic_eq_enabled = dynamic_eq_harsh_attenuation_db > 0.0
+
+        mid_delta = analysis.reference.mid_band_energy - analysis.target.mid_band_energy
+        side_delta = analysis.target.high_band_energy - analysis.reference.high_band_energy
+        stereo_side_gain_db = _clamp(-(side_delta * 8.0), -1.5, 1.5)
+        stereo_mid_gain_db = _clamp(mid_delta * 6.0, -1.0, 1.0)
+        stereo_ms_correction_enabled = (
+            abs(stereo_side_gain_db) >= 0.1 or abs(stereo_mid_gain_db) >= 0.1
+        )
+
     return DecisionPayload(
         gain_db=gain_db,
         low_shelf_gain_db=low_shelf_gain_db,
@@ -287,4 +365,17 @@ def decide_mastering(
         limiter_ceiling_db=limiter_ceiling_db,
         de_esser_threshold=de_esser_threshold,
         de_esser_depth_db=de_esser_depth_db,
+        multiband_compression_enabled=multiband_compression_enabled,
+        multiband_low_threshold_db=multiband_low_threshold_db,
+        multiband_low_ratio=multiband_low_ratio,
+        multiband_mid_threshold_db=multiband_mid_threshold_db,
+        multiband_mid_ratio=multiband_mid_ratio,
+        multiband_high_threshold_db=multiband_high_threshold_db,
+        multiband_high_ratio=multiband_high_ratio,
+        dynamic_eq_enabled=dynamic_eq_enabled,
+        dynamic_eq_harsh_threshold=dynamic_eq_harsh_threshold,
+        dynamic_eq_harsh_attenuation_db=dynamic_eq_harsh_attenuation_db,
+        stereo_ms_correction_enabled=stereo_ms_correction_enabled,
+        stereo_mid_gain_db=stereo_mid_gain_db,
+        stereo_side_gain_db=stereo_side_gain_db,
     )

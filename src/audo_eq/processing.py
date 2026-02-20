@@ -286,17 +286,117 @@ def _build_optional_de_esser_stage(
     ]
 
 
-def build_dsp_chain(
+def _build_optional_dynamic_eq_stage(
     decision: DecisionPayload,
-    eq_mode: EqMode = EqMode.FIXED,
-    eq_preset: EqPreset = EqPreset.NEUTRAL,
-    eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
-    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
-) -> Pedalboard:
-    """Build the mastering DSP chain from the decision payload."""
+    advanced_mode: bool,
+) -> list:
+    """Build optional harsh-region attenuation stage."""
 
-    tuning = EQ_PRESET_TUNINGS[eq_preset]
+    if not advanced_mode or not decision.dynamic_eq_enabled:
+        return []
+    if decision.dynamic_eq_harsh_attenuation_db <= 0.0:
+        return []
 
+    return [
+        HighShelfFilter(
+            cutoff_frequency_hz=3_500.0,
+            gain_db=round(float(-decision.dynamic_eq_harsh_attenuation_db), 6),
+        )
+    ]
+
+
+def _bandpass_via_fft(
+    audio: np.ndarray,
+    sample_rate: int,
+    low_hz: float | None,
+    high_hz: float | None,
+) -> np.ndarray:
+    """Simple linear-phase band split using FFT masks."""
+
+    audio_float = audio.astype(np.float64, copy=False)
+    squeeze = False
+    if audio_float.ndim == 1:
+        audio_float = audio_float[np.newaxis, :]
+        squeeze = True
+
+    spectrum = np.fft.rfft(audio_float, axis=-1)
+    freqs = np.fft.rfftfreq(audio_float.shape[-1], d=1.0 / sample_rate)
+    mask = np.ones_like(freqs, dtype=bool)
+    if low_hz is not None:
+        mask &= freqs >= low_hz
+    if high_hz is not None:
+        mask &= freqs < high_hz
+    filtered = np.fft.irfft(spectrum * mask[np.newaxis, :], n=audio_float.shape[-1], axis=-1)
+    if squeeze:
+        return filtered[0]
+    return filtered
+
+
+def _apply_optional_multiband_compression(
+    audio: np.ndarray,
+    sample_rate: int,
+    decision: DecisionPayload,
+    advanced_mode: bool,
+) -> np.ndarray:
+    if not advanced_mode or not decision.multiband_compression_enabled:
+        return audio
+
+    low_band = _bandpass_via_fft(audio, sample_rate, low_hz=None, high_hz=200.0)
+    mid_band = _bandpass_via_fft(audio, sample_rate, low_hz=200.0, high_hz=4_000.0)
+    high_band = _bandpass_via_fft(audio, sample_rate, low_hz=4_000.0, high_hz=None)
+
+    low_processed = Compressor(
+        threshold_db=decision.multiband_low_threshold_db,
+        ratio=decision.multiband_low_ratio,
+        attack_ms=25.0,
+        release_ms=160.0,
+    )(low_band, sample_rate)
+    mid_processed = Compressor(
+        threshold_db=decision.multiband_mid_threshold_db,
+        ratio=decision.multiband_mid_ratio,
+        attack_ms=15.0,
+        release_ms=120.0,
+    )(mid_band, sample_rate)
+    high_processed = Compressor(
+        threshold_db=decision.multiband_high_threshold_db,
+        ratio=decision.multiband_high_ratio,
+        attack_ms=8.0,
+        release_ms=90.0,
+    )(high_band, sample_rate)
+    return low_processed + mid_processed + high_processed
+
+
+def _apply_optional_ms_gain_correction(
+    audio: np.ndarray,
+    decision: DecisionPayload,
+    advanced_mode: bool,
+) -> np.ndarray:
+    if not advanced_mode or not decision.stereo_ms_correction_enabled:
+        return audio
+    if audio.ndim != 2 or audio.shape[0] < 2:
+        return audio
+
+    left = audio[0].astype(np.float64, copy=False)
+    right = audio[1].astype(np.float64, copy=False)
+    mid = 0.5 * (left + right)
+    side = 0.5 * (left - right)
+    mid *= 10.0 ** (decision.stereo_mid_gain_db / 20.0)
+    side *= 10.0 ** (decision.stereo_side_gain_db / 20.0)
+    corrected_left = mid + side
+    corrected_right = mid - side
+    corrected = np.vstack([corrected_left, corrected_right])
+    return np.clip(corrected, -1.0, 1.0).astype(audio.dtype, copy=False)
+
+
+def _build_pre_limiter_plugins(
+    decision: DecisionPayload,
+    tuning: EqPresetTuning,
+    eq_mode: EqMode,
+    eq_band_corrections: tuple[EqBandCorrection, ...],
+    de_esser_mode: DeEsserMode,
+    gain_db: float,
+    advanced_mode: bool,
+) -> list:
     plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
         LowShelfFilter(
@@ -312,25 +412,47 @@ def build_dsp_chain(
             ),
         ),
     ]
-
     if eq_mode is EqMode.REFERENCE_MATCH:
         plugins.extend(
             _build_reference_match_eq_stage(eq_band_corrections, tuning=tuning)
         )
 
-    plugins.extend(
-        [
+    plugins.extend(_build_optional_dynamic_eq_stage(decision, advanced_mode=advanced_mode))
+
+    if not (advanced_mode and decision.multiband_compression_enabled):
+        plugins.append(
             Compressor(
                 threshold_db=decision.compressor_threshold_db,
                 ratio=decision.compressor_ratio,
                 attack_ms=15.0,
                 release_ms=120.0,
-            ),
-            Gain(gain_db=decision.gain_db),
-        ]
-    )
-    plugins.extend(
-        _build_optional_de_esser_stage(decision, de_esser_mode=de_esser_mode)
+            )
+        )
+    plugins.append(Gain(gain_db=gain_db))
+    plugins.extend(_build_optional_de_esser_stage(decision, de_esser_mode=de_esser_mode))
+    return plugins
+
+
+def build_dsp_chain(
+    decision: DecisionPayload,
+    eq_mode: EqMode = EqMode.FIXED,
+    eq_preset: EqPreset = EqPreset.NEUTRAL,
+    eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
+    advanced_mode: bool = False,
+) -> Pedalboard:
+    """Build the mastering DSP chain from the decision payload."""
+
+    tuning = EQ_PRESET_TUNINGS[eq_preset]
+
+    plugins = _build_pre_limiter_plugins(
+        decision=decision,
+        tuning=tuning,
+        eq_mode=eq_mode,
+        eq_band_corrections=eq_band_corrections,
+        de_esser_mode=de_esser_mode,
+        gain_db=decision.gain_db,
+        advanced_mode=advanced_mode,
     )
     plugins.append(Limiter(threshold_db=decision.limiter_ceiling_db, release_ms=150.0))
 
@@ -346,17 +468,30 @@ def apply_processing(
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
     mastering_profile: str | None = None,
     de_esser_mode: DeEsserMode = DeEsserMode.OFF,
+    advanced_mode: bool = False,
 ) -> np.ndarray:
     """Apply the constructed DSP chain to target audio."""
 
+    staged_audio = _apply_optional_ms_gain_correction(
+        target_audio,
+        decision=decision,
+        advanced_mode=advanced_mode,
+    )
+    staged_audio = _apply_optional_multiband_compression(
+        staged_audio,
+        sample_rate=sample_rate,
+        decision=decision,
+        advanced_mode=advanced_mode,
+    )
     board = build_dsp_chain(
         decision,
         eq_mode=eq_mode,
         eq_preset=eq_preset,
         eq_band_corrections=eq_band_corrections,
         de_esser_mode=de_esser_mode,
+        advanced_mode=advanced_mode,
     )
-    return board(target_audio, sample_rate)
+    return board(staged_audio, sample_rate)
 
 
 def apply_processing_with_loudness_target(
@@ -370,6 +505,7 @@ def apply_processing_with_loudness_target(
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
     mastering_profile: str | None = None,
     de_esser_mode: DeEsserMode = DeEsserMode.OFF,
+    advanced_mode: bool = False,
 ) -> np.ndarray:
     """Apply mastering chain with loudness targeting around the final limiter."""
 
@@ -380,43 +516,29 @@ def apply_processing_with_loudness_target(
     true_peak_tuning = resolve_true_peak_tuning(profile)
     tuning = EQ_PRESET_TUNINGS[eq_preset]
 
-    pre_limiter_plugins = [
-        HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(
-            cutoff_frequency_hz=125.0,
-            gain_db=round(
-                float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6
-            ),
-        ),
-        HighShelfFilter(
-            cutoff_frequency_hz=6_000.0,
-            gain_db=round(
-                float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6
-            ),
-        ),
-    ]
-    if eq_mode is EqMode.REFERENCE_MATCH:
-        pre_limiter_plugins.extend(
-            _build_reference_match_eq_stage(eq_band_corrections, tuning=tuning)
-        )
-
-    pre_limiter_plugins.extend(
-        [
-            Compressor(
-                threshold_db=decision.compressor_threshold_db,
-                ratio=decision.compressor_ratio,
-                attack_ms=15.0,
-                release_ms=120.0,
-            ),
-            Gain(gain_db=decision.gain_db + loudness_gain_db),
-        ]
+    pre_limiter_audio = _apply_optional_ms_gain_correction(
+        target_audio,
+        decision=decision,
+        advanced_mode=advanced_mode,
     )
-    pre_limiter_plugins.extend(
-        _build_optional_de_esser_stage(decision, de_esser_mode=de_esser_mode)
+    pre_limiter_audio = _apply_optional_multiband_compression(
+        pre_limiter_audio,
+        sample_rate=sample_rate,
+        decision=decision,
+        advanced_mode=advanced_mode,
     )
 
+    pre_limiter_plugins = _build_pre_limiter_plugins(
+        decision=decision,
+        tuning=tuning,
+        eq_mode=eq_mode,
+        eq_band_corrections=eq_band_corrections,
+        de_esser_mode=de_esser_mode,
+        gain_db=decision.gain_db + loudness_gain_db,
+        advanced_mode=advanced_mode,
+    )
     pre_limiter_chain = Pedalboard(pre_limiter_plugins)
-    pre_limiter_audio = pre_limiter_chain(target_audio, sample_rate)
+    pre_limiter_audio = pre_limiter_chain(pre_limiter_audio, sample_rate)
 
     limiter = Limiter(threshold_db=decision.limiter_ceiling_db, release_ms=150.0)
     limited_audio = limiter(pre_limiter_audio, sample_rate)
