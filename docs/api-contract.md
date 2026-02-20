@@ -17,7 +17,7 @@ Because the service uses FastAPI defaults (`FastAPI(...)` without overriding doc
 | Method | Path | Request | Success response | Error responses |
 | --- | --- | --- | --- | --- |
 | `GET` | `/health` | No body | `200 OK`, `application/json`, body: `{"status":"ok"}` | N/A |
-| `POST` | `/master` | `multipart/form-data` with required file parts `target` and `reference`; optional query params `eq_mode` and `eq_preset`; optional header `X-Correlation-Id` | `200 OK`, `audio/wav` binary bytes (mastered output) plus response headers listed below | `400` (invalid query/payload/validation), `415` (unsupported container/codec), `503` (persistence guarantee cannot be satisfied) |
+| `POST` | `/master` | `multipart/form-data` with required file parts `target` and `reference`; optional query params `eq_mode`, `eq_preset`, and `de_esser_mode`; optional header `X-Correlation-Id` | `200 OK`, `audio/wav` binary bytes (mastered output) plus response headers listed below, including diagnostics header | `400` (invalid query/payload/validation), `415` (unsupported container/codec), `503` (persistence guarantee cannot be satisfied) |
 
 ## `POST /master` request contract
 
@@ -35,7 +35,8 @@ If a filename extension is present, unsupported extensions fail validation. If e
 | Parameter | Required | Default | Allowed values |
 | --- | --- | --- | --- |
 | `eq_mode` | No | `fixed` | Values from `EqMode` (currently `fixed`, `reference-match`) |
-| `eq_preset` | No | `neutral` | Values from `EqPreset` (currently `neutral`, `warm`, `bright`, `vocal`) |
+| `eq_preset` | No | `neutral` | Values from `EqPreset` (currently `neutral`, `warm`, `bright`, `vocal-presence`, `bass-boost`) |
+| `de_esser_mode` | No | `off` | Values from `DeEsserMode` (currently `off`, `auto`) |
 
 Invalid enum values return `400` with `detail.code = "invalid_query_parameter"`.
 
@@ -56,6 +57,7 @@ Invalid enum values return `400` with `detail.code = "invalid_query_parameter"`.
 | `X-Ingest-Policy-Id` | Always on success | Active ingest policy ID. |
 | `X-Normalization-Policy-Id` | Always on success | Active normalization policy ID. |
 | `X-Mastering-Profile-Id` | Always on success | Active mastering profile ID. |
+| `X-Mastering-Diagnostics` | Conditional | JSON diagnostics payload (compact serialized object) containing LUFS in/out, crest delta, spectral summary, limiter/true-peak values, and applied chain parameters. Present when mastering pipeline diagnostics are available. |
 | `X-Mastered-Object-Url` | Conditional | Included only when persistence returns an object URL (e.g., immediate storage success). |
 | `X-Artifact-Persistence-Status` | Always on success | Persistence status: `stored`, `deferred`, or `skipped`. |
 

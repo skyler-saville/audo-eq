@@ -4,6 +4,12 @@ import wave
 from fastapi.testclient import TestClient
 
 from audo_eq.api import app
+from audo_eq.domain.models import (
+    AppliedChainParameters,
+    LimiterTruePeakDiagnostics,
+    MasteringDiagnostics,
+    SpectralBalanceSummary,
+)
 
 
 client = TestClient(app)
@@ -331,3 +337,61 @@ def test_master_response_media_type_falls_back_to_audio_wav(monkeypatch) -> None
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/wav"
     assert captured["content_type"] == "text/plain"
+
+
+def test_master_includes_diagnostics_header_when_available(monkeypatch) -> None:
+    diagnostics = MasteringDiagnostics(
+        input_lufs=-16.1,
+        output_lufs=-13.9,
+        reference_lufs=-14.0,
+        crest_factor_delta_db=1.2,
+        spectral_balance=SpectralBalanceSummary(
+            low_band_delta=0.01,
+            mid_band_delta=-0.02,
+            high_band_delta=0.03,
+        ),
+        limiter_true_peak=LimiterTruePeakDiagnostics(
+            limiter_ceiling_db=-1.0,
+            measured_true_peak_dbtp=-1.2,
+            true_peak_margin_db=0.2,
+        ),
+        applied_chain=AppliedChainParameters(
+            eq_mode="fixed",
+            eq_preset="neutral",
+            de_esser_mode="off",
+            loudness_gain_db=2.0,
+            gain_db=1.0,
+            low_shelf_gain_db=0.1,
+            high_shelf_gain_db=-0.1,
+            compressor_threshold_db=-20.0,
+            compressor_ratio=2.1,
+            de_esser_threshold=0.08,
+            de_esser_depth_db=0.0,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "audo_eq.api.master_bytes",
+        lambda **kwargs: (make_wav_bytes(), diagnostics),
+    )
+
+    class _Repo:
+        def persist(self, **kwargs):
+            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+
+            return PersistedArtifact(status="skipped")
+
+    monkeypatch.setattr("audo_eq.api._build_repository_for_mode", lambda mode: _Repo())
+
+    response = client.post(
+        "/master",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
+    header = response.headers.get("x-mastering-diagnostics")
+    assert header is not None
+    assert '"output_lufs":-13.9' in header

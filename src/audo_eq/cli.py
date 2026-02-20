@@ -38,6 +38,11 @@ def master_command(
         case_sensitive=False,
         help="Optional de-esser stage before limiting: off or auto.",
     ),
+    report_json: Path | None = typer.Option(
+        None,
+        "--report-json",
+        help="Optional path to write mastering diagnostics JSON.",
+    ),
 ) -> None:
     """Master a target audio file against a reference file."""
 
@@ -50,6 +55,7 @@ def master_command(
         eq_mode=eq_mode,
         eq_preset=eq_preset,
         de_esser_mode=de_esser_mode,
+        report_json=report_json,
     )
     typer.echo(f"Mastered audio written to: {written}")
     typer.echo(f"Correlation ID: {correlation_id}")

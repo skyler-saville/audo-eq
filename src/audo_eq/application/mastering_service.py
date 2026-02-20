@@ -20,9 +20,13 @@ from audo_eq.domain.events import (
     TrackAnalyzed,
 )
 from audo_eq.domain.models import (
+    AppliedChainParameters,
     AudioAsset,
+    LimiterTruePeakDiagnostics,
+    MasteringDiagnostics,
     MasteringRequest,
     MasteringResult,
+    SpectralBalanceSummary,
     ValidationStatus,
 )
 from audo_eq.domain.policies import (
@@ -46,6 +50,7 @@ from audo_eq.normalization import normalize_audio
 from audo_eq.processing import (
     apply_processing_with_loudness_target,
     measure_integrated_lufs,
+    measure_true_peak_dbtp,
     resolve_mastering_profile,
 )
 
@@ -201,6 +206,42 @@ class MasterTrackAgainstReference:
             mastering_profile=mastering_profile_name,
             de_esser_mode=de_esser_mode,
         )
+        output_lufs = measure_integrated_lufs(mastered_audio, sample_rate)
+        measured_true_peak_dbtp = measure_true_peak_dbtp(mastered_audio)
+        limiter_true_peak = LimiterTruePeakDiagnostics(
+            limiter_ceiling_db=decision.limiter_ceiling_db,
+            measured_true_peak_dbtp=measured_true_peak_dbtp,
+            true_peak_margin_db=decision.limiter_ceiling_db - measured_true_peak_dbtp,
+        )
+        diagnostics = MasteringDiagnostics(
+            input_lufs=target_lufs,
+            output_lufs=output_lufs,
+            reference_lufs=reference_lufs,
+            crest_factor_delta_db=analysis.reference.crest_factor_db
+            - analysis.target.crest_factor_db,
+            spectral_balance=SpectralBalanceSummary(
+                low_band_delta=analysis.reference.low_band_energy
+                - analysis.target.low_band_energy,
+                mid_band_delta=analysis.reference.mid_band_energy
+                - analysis.target.mid_band_energy,
+                high_band_delta=analysis.reference.high_band_energy
+                - analysis.target.high_band_energy,
+            ),
+            limiter_true_peak=limiter_true_peak,
+            applied_chain=AppliedChainParameters(
+                eq_mode=eq_mode.value,
+                eq_preset=eq_preset.value,
+                de_esser_mode=de_esser_mode.value,
+                loudness_gain_db=loudness_gain_db,
+                gain_db=decision.gain_db,
+                low_shelf_gain_db=decision.low_shelf_gain_db,
+                high_shelf_gain_db=decision.high_shelf_gain_db,
+                compressor_threshold_db=decision.compressor_threshold_db,
+                compressor_ratio=decision.compressor_ratio,
+                de_esser_threshold=decision.de_esser_threshold,
+                de_esser_depth_db=decision.de_esser_depth_db,
+            ),
+        )
         self.event_publisher.publish(
             MasteringRendered(
                 correlation_id=run_correlation_id,
@@ -212,6 +253,8 @@ class MasterTrackAgainstReference:
                     "eq_preset": eq_preset.value,
                     "de_esser_mode": de_esser_mode.value,
                     "strategy_id": strategy_selection.policy.strategy_id,
+                    "output_lufs": output_lufs,
+                    "measured_true_peak_dbtp": measured_true_peak_dbtp,
                 },
             )
         )
@@ -222,6 +265,7 @@ class MasterTrackAgainstReference:
             ingest_policy_id=self.ingest_policy.policy_id,
             normalization_policy_id=self.normalization_policy.policy_id,
             mastering_profile_id=self.mastering_profile.profile_id,
+            diagnostics=diagnostics,
             policy_version=self.mastering_profile.policy_version,
         )
 
@@ -258,7 +302,7 @@ class MasterTrackAgainstReference:
         )
         return result
 
-    def master_bytes(
+    def master_bytes_with_diagnostics(
         self,
         target_bytes: bytes,
         reference_bytes: bytes,
@@ -266,7 +310,7 @@ class MasterTrackAgainstReference:
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
         de_esser_mode: DeEsserMode = DeEsserMode.OFF,
-    ) -> bytes:
+    ) -> tuple[bytes, MasteringDiagnostics]:
         run_correlation_id = correlation_id or str(uuid4())
         if not target_bytes:
             error = ValueError("Target audio is empty.")
@@ -328,7 +372,7 @@ class MasterTrackAgainstReference:
             )
 
             try:
-                self.master_to_path(
+                result = self.master_to_path(
                     target_audio=normalized_target.audio,
                     reference_audio=normalized_reference.audio,
                     sample_rate=normalized_target.sample_rate_hz,
@@ -338,7 +382,7 @@ class MasterTrackAgainstReference:
                     eq_preset=eq_preset,
                     de_esser_mode=de_esser_mode,
                 )
-                return output_path.read_bytes()
+                return output_path.read_bytes(), result.diagnostics
             except Exception as error:  # noqa: BLE001
                 self.event_publisher.publish(
                     MasteringFailed(
@@ -348,14 +392,33 @@ class MasterTrackAgainstReference:
                 )
                 raise
 
-    def master_file(
+    def master_bytes(
+        self,
+        target_bytes: bytes,
+        reference_bytes: bytes,
+        correlation_id: str | None = None,
+        eq_mode: EqMode = EqMode.FIXED,
+        eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
+    ) -> bytes:
+        mastered_bytes, _ = self.master_bytes_with_diagnostics(
+            target_bytes=target_bytes,
+            reference_bytes=reference_bytes,
+            correlation_id=correlation_id,
+            eq_mode=eq_mode,
+            eq_preset=eq_preset,
+            de_esser_mode=de_esser_mode,
+        )
+        return mastered_bytes
+
+    def master_file_with_diagnostics(
         self,
         request: MasteringRequest,
         correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
         de_esser_mode: DeEsserMode = DeEsserMode.OFF,
-    ) -> Path:
+    ) -> tuple[Path, MasteringDiagnostics]:
         run_correlation_id = correlation_id or str(uuid4())
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -378,7 +441,7 @@ class MasterTrackAgainstReference:
                 policy=request.normalization_policy,
             )
 
-            self.master_to_path(
+            result = self.master_to_path(
                 target_audio=normalized_target.audio,
                 reference_audio=normalized_reference.audio,
                 sample_rate=normalized_target.sample_rate_hz,
@@ -389,4 +452,21 @@ class MasterTrackAgainstReference:
                 de_esser_mode=de_esser_mode,
             )
 
-        return request.output_path
+        return request.output_path, result.diagnostics
+
+    def master_file(
+        self,
+        request: MasteringRequest,
+        correlation_id: str | None = None,
+        eq_mode: EqMode = EqMode.FIXED,
+        eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
+    ) -> Path:
+        output_path, _ = self.master_file_with_diagnostics(
+            request=request,
+            correlation_id=correlation_id,
+            eq_mode=eq_mode,
+            eq_preset=eq_preset,
+            de_esser_mode=de_esser_mode,
+        )
+        return output_path
