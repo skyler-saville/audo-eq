@@ -74,6 +74,9 @@ def test_master_bytes_emits_events_in_order_success(monkeypatch) -> None:
         ArtifactStored,
     ]
     assert all(event.correlation_id == "corr-1" for event in publisher.events)
+    decided_event = publisher.events[2]
+    assert decided_event.payload_summary["strategy_id"] == "balanced"
+    assert decided_event.payload_summary["strategy_conditions"] == []
 
 
 def test_master_bytes_emits_failure_event(monkeypatch) -> None:

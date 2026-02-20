@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 
@@ -113,33 +114,145 @@ class DecisionPayload:
     de_esser_depth_db: float = 0.0
 
 
+class StrategyCondition(str, Enum):
+    """Named mix conditions inferred from analysis features."""
+
+    BASS_HEAVY = "bass_heavy"
+    HARSH_UPPER_MIDS = "harsh_upper_mids"
+    OVER_COMPRESSED = "over_compressed"
+    CLIPPING_PRONE = "clipping_prone"
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionStrategyPolicy:
+    """Variant behavior knobs applied on top of profile-level tuning."""
+
+    strategy_id: str
+    eq_intensity_scale: float = 1.0
+    dynamics_aggressiveness_scale: float = 1.0
+    de_esser_depth_scale: float = 1.0
+    de_esser_threshold_offset: float = 0.0
+    limiter_ceiling_offset_db: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class StrategySelection:
+    """Auditable strategy-selection outcome."""
+
+    policy: DecisionStrategyPolicy
+    conditions: tuple[StrategyCondition, ...]
+
+
+DECISION_STRATEGY_POLICIES: dict[str, DecisionStrategyPolicy] = {
+    "balanced": DecisionStrategyPolicy(strategy_id="balanced"),
+    "bass_control": DecisionStrategyPolicy(
+        strategy_id="bass_control",
+        eq_intensity_scale=1.2,
+        dynamics_aggressiveness_scale=1.1,
+        limiter_ceiling_offset_db=-0.05,
+    ),
+    "harsh_tame": DecisionStrategyPolicy(
+        strategy_id="harsh_tame",
+        eq_intensity_scale=1.15,
+        de_esser_depth_scale=1.2,
+        de_esser_threshold_offset=-0.01,
+    ),
+    "dynamic_rescue": DecisionStrategyPolicy(
+        strategy_id="dynamic_rescue",
+        dynamics_aggressiveness_scale=1.3,
+        limiter_ceiling_offset_db=-0.1,
+    ),
+    "clip_guard": DecisionStrategyPolicy(
+        strategy_id="clip_guard",
+        limiter_ceiling_offset_db=-0.2,
+        dynamics_aggressiveness_scale=1.15,
+    ),
+    "corrective_combo": DecisionStrategyPolicy(
+        strategy_id="corrective_combo",
+        eq_intensity_scale=1.2,
+        dynamics_aggressiveness_scale=1.25,
+        de_esser_depth_scale=1.25,
+        de_esser_threshold_offset=-0.01,
+        limiter_ceiling_offset_db=-0.2,
+    ),
+}
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     return float(np.clip(value, low, high))
 
 
+def select_decision_strategy(analysis: AnalysisPayload) -> StrategySelection:
+    """Classify mix conditions and select a decision-strategy policy."""
+
+    conditions: list[StrategyCondition] = []
+    low_energy_delta = analysis.target.low_band_energy - analysis.reference.low_band_energy
+    high_energy_delta = analysis.target.high_band_energy - analysis.reference.high_band_energy
+    crest_delta = analysis.reference.crest_factor_db - analysis.target.crest_factor_db
+
+    if low_energy_delta >= 0.08:
+        conditions.append(StrategyCondition.BASS_HEAVY)
+    if high_energy_delta >= 0.08 or analysis.sibilance_ratio_delta >= 0.025:
+        conditions.append(StrategyCondition.HARSH_UPPER_MIDS)
+    if crest_delta >= 2.0:
+        conditions.append(StrategyCondition.OVER_COMPRESSED)
+    if analysis.target.is_clipping or analysis.target.rms_db >= -9.0:
+        conditions.append(StrategyCondition.CLIPPING_PRONE)
+
+    condition_set = set(conditions)
+    if len(condition_set) >= 3:
+        policy = DECISION_STRATEGY_POLICIES["corrective_combo"]
+    elif StrategyCondition.CLIPPING_PRONE in condition_set:
+        policy = DECISION_STRATEGY_POLICIES["clip_guard"]
+    elif StrategyCondition.OVER_COMPRESSED in condition_set:
+        policy = DECISION_STRATEGY_POLICIES["dynamic_rescue"]
+    elif StrategyCondition.HARSH_UPPER_MIDS in condition_set:
+        policy = DECISION_STRATEGY_POLICIES["harsh_tame"]
+    elif StrategyCondition.BASS_HEAVY in condition_set:
+        policy = DECISION_STRATEGY_POLICIES["bass_control"]
+    else:
+        policy = DECISION_STRATEGY_POLICIES["balanced"]
+
+    return StrategySelection(policy=policy, conditions=tuple(conditions))
+
+
 def decide_mastering(
-    analysis: AnalysisPayload, profile: str = "default"
+    analysis: AnalysisPayload,
+    profile: str = "default",
+    strategy: StrategySelection | None = None,
 ) -> DecisionPayload:
     """Translate analysis deltas into DSP parameters."""
 
     tuning = resolve_decision_tuning(profile)
+    selected_strategy = strategy or select_decision_strategy(analysis)
+    policy = selected_strategy.policy
     gain_db = _clamp(analysis.rms_delta_db, *tuning.gain_clamp_db)
 
     low_delta = analysis.reference.low_band_energy - analysis.target.low_band_energy
     high_delta = analysis.reference.high_band_energy - analysis.target.high_band_energy
 
-    low_shelf_gain_db = _clamp(low_delta * tuning.shelf_scale, *tuning.shelf_clamp_db)
-    high_shelf_gain_db = _clamp(high_delta * tuning.shelf_scale, *tuning.shelf_clamp_db)
+    low_shelf_gain_db = _clamp(
+        low_delta * tuning.shelf_scale * policy.eq_intensity_scale,
+        *tuning.shelf_clamp_db,
+    )
+    high_shelf_gain_db = _clamp(
+        high_delta * tuning.shelf_scale * policy.eq_intensity_scale,
+        *tuning.shelf_clamp_db,
+    )
 
     crest_delta = analysis.target.crest_factor_db - analysis.reference.crest_factor_db
     compressor_threshold_db = _clamp(
         tuning.compressor_base_threshold_db
-        + crest_delta * tuning.compressor_threshold_scale,
+        + crest_delta
+        * tuning.compressor_threshold_scale
+        * policy.dynamics_aggressiveness_scale,
         *tuning.compressor_threshold_clamp_db,
     )
     compressor_ratio = _clamp(
         tuning.compressor_base_ratio
-        + max(0.0, crest_delta) * tuning.compressor_ratio_scale,
+        + max(0.0, crest_delta)
+        * tuning.compressor_ratio_scale
+        * policy.dynamics_aggressiveness_scale,
         *tuning.compressor_ratio_clamp,
     )
 
@@ -148,17 +261,20 @@ def decide_mastering(
         if analysis.target.is_clipping
         else tuning.limiter_ceiling_default_db
     )
+    limiter_ceiling_db += policy.limiter_ceiling_offset_db
 
     de_esser_threshold = _clamp(
         tuning.de_esser_threshold_base
-        + analysis.reference.sibilance_ratio * tuning.de_esser_threshold_delta_scale,
+        + analysis.reference.sibilance_ratio * tuning.de_esser_threshold_delta_scale
+        + policy.de_esser_threshold_offset,
         *tuning.de_esser_threshold_clamp,
     )
     sibilance_excess = max(0.0, analysis.target.sibilance_ratio - de_esser_threshold)
     sibilance_delta_excess = max(0.0, analysis.sibilance_ratio_delta)
     de_esser_depth_db = _clamp(
         (sibilance_excess + (0.5 * sibilance_delta_excess))
-        * tuning.de_esser_depth_scale,
+        * tuning.de_esser_depth_scale
+        * policy.de_esser_depth_scale,
         *tuning.de_esser_depth_clamp_db,
     )
 

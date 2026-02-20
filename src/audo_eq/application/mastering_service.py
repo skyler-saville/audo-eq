@@ -10,7 +10,7 @@ import numpy as np
 
 from audo_eq.application.event_publisher import EventPublisher, NullEventPublisher
 from audo_eq.analysis import analyze_tracks
-from audo_eq.decision import decide_mastering
+from audo_eq.decision import decide_mastering, select_decision_strategy
 from audo_eq.domain.events import (
     ArtifactStored,
     IngestValidated,
@@ -169,9 +169,11 @@ class MasterTrackAgainstReference:
                 },
             )
         )
+        strategy_selection = select_decision_strategy(analysis)
         decision = decide_mastering(
             analysis=analysis,
             profile=mastering_profile_name,
+            strategy=strategy_selection,
         )
         self.event_publisher.publish(
             MasteringDecided(
@@ -180,6 +182,10 @@ class MasterTrackAgainstReference:
                     "gain_db": decision.gain_db,
                     "compressor_ratio": decision.compressor_ratio,
                     "limiter_ceiling_db": decision.limiter_ceiling_db,
+                    "strategy_id": strategy_selection.policy.strategy_id,
+                    "strategy_conditions": [
+                        condition.value for condition in strategy_selection.conditions
+                    ],
                 },
             )
         )
@@ -205,6 +211,7 @@ class MasterTrackAgainstReference:
                     "eq_mode": eq_mode.value,
                     "eq_preset": eq_preset.value,
                     "de_esser_mode": de_esser_mode.value,
+                    "strategy_id": strategy_selection.policy.strategy_id,
                 },
             )
         )

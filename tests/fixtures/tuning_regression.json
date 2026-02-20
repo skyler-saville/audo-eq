@@ -40,9 +40,9 @@
         "gain_db": -0.173901,
         "low_shelf_gain_db": -3.0,
         "high_shelf_gain_db": 3.0,
-        "compressor_threshold_db": -23.805484,
+        "compressor_threshold_db": -24.076307,
         "compressor_ratio": 2.2,
-        "limiter_ceiling_db": -1.0
+        "limiter_ceiling_db": -1.2
       }
     },
     "conservative": {
@@ -84,9 +84,9 @@
         "gain_db": -0.173901,
         "low_shelf_gain_db": -2.25,
         "high_shelf_gain_db": 2.25,
-        "compressor_threshold_db": -21.203656,
+        "compressor_threshold_db": -21.384204,
         "compressor_ratio": 1.9,
-        "limiter_ceiling_db": -1.1
+        "limiter_ceiling_db": -1.3
       }
     },
     "aggressive": {
@@ -128,9 +128,9 @@
         "gain_db": -0.173901,
         "low_shelf_gain_db": -4.0,
         "high_shelf_gain_db": 4.0,
-        "compressor_threshold_db": -26.256855,
+        "compressor_threshold_db": -26.595383,
         "compressor_ratio": 2.6,
-        "limiter_ceiling_db": -0.9
+        "limiter_ceiling_db": -1.1
       }
     }
   }
