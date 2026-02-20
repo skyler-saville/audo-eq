@@ -213,6 +213,8 @@ poetry run audo-eq master \
 
 The command validates both input files and writes the mastered output to the requested path (creating parent directories if needed).
 
+For supported ingest/output formats and troubleshooting guidance, see **[docs/audio-format-support.md](docs/audio-format-support.md)**.
+
 ## Run as REST API (FastAPI)
 
 ```bash
@@ -236,6 +238,8 @@ curl -X POST http://127.0.0.1:8000/master \
   -F "reference=@./reference.wav" \
   --output mastered.wav
 ```
+
+For supported ingest/output formats and `400` vs `415` error mapping details, see **[docs/audio-format-support.md](docs/audio-format-support.md)**.
 
 ### API behavior notes
 
