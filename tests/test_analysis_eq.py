@@ -50,3 +50,40 @@ def test_analysis_reports_higher_sibilance_ratio_for_sibilant_tone() -> None:
 
     assert analysis.target.sibilance_ratio > analysis.reference.sibilance_ratio
     assert analysis.sibilance_ratio_delta > 0.0
+
+
+def test_analysis_includes_short_time_temporal_descriptors() -> None:
+    sample_rate = 48_000
+    duration_s = 2.0
+    t = np.arange(int(sample_rate * duration_s), dtype=np.float64) / sample_rate
+    envelope = np.where(t < 1.0, 0.2, 0.8)
+    target = envelope * np.sin(2.0 * np.pi * 440.0 * t)
+    reference = np.sin(2.0 * np.pi * 440.0 * t)
+
+    analysis = analyze_tracks(target, reference, sample_rate)
+
+    temporal = analysis.target_temporal
+    assert temporal.frame_times_s
+    assert len(temporal.frame_times_s) == len(temporal.loudness_envelope_db)
+    assert len(temporal.frame_times_s) == len(temporal.multiband_energy_trajectories)
+    assert len(temporal.frame_times_s) == len(temporal.transient_density_trajectory)
+    assert len(temporal.frame_times_s) == len(temporal.crest_factor_trajectory_db)
+    assert temporal.band_centers_hz
+
+    mid = len(temporal.loudness_envelope_db) // 2
+    assert np.mean(temporal.loudness_envelope_db[:mid]) < np.mean(temporal.loudness_envelope_db[mid:])
+
+
+def test_analysis_temporal_windowing_uses_overlap_for_300ms_frames() -> None:
+    sample_rate = 48_000
+    duration_s = 1.2
+    target = _tone(440.0, 0.4, sample_rate, duration_s)
+    reference = _tone(440.0, 0.4, sample_rate, duration_s)
+
+    analysis = analyze_tracks(target, reference, sample_rate)
+
+    frame_times = np.asarray(analysis.target_temporal.frame_times_s)
+    assert frame_times.size > 4
+
+    hop_seconds = float(np.median(np.diff(frame_times)))
+    assert 0.14 <= hop_seconds <= 0.16

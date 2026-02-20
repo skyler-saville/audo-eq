@@ -101,12 +101,30 @@ class TrackMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporalTrackMetrics:
+    """Short-time descriptors for dynamics and spectral balance."""
+
+    frame_times_s: tuple[float, ...] = tuple()
+    loudness_envelope_db: tuple[float, ...] = tuple()
+    band_centers_hz: tuple[float, ...] = tuple()
+    multiband_energy_trajectories: tuple[tuple[float, ...], ...] = tuple()
+    transient_density_trajectory: tuple[float, ...] = tuple()
+    crest_factor_trajectory_db: tuple[float, ...] = tuple()
+    mean_transient_density: float = 0.0
+    peak_transient_density: float = 0.0
+    mean_crest_factor_db: float = 0.0
+    peak_crest_factor_db: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisPayload:
     """Combined analysis metrics for target and reference tracks."""
 
     target: TrackMetrics
     reference: TrackMetrics
     eq_band_corrections: tuple[EqBandCorrection, ...]
+    target_temporal: TemporalTrackMetrics = TemporalTrackMetrics()
+    reference_temporal: TemporalTrackMetrics = TemporalTrackMetrics()
 
     @property
     def rms_delta_db(self) -> float:
@@ -254,6 +272,89 @@ def _derive_eq_band_corrections(
     return tuple(corrections)
 
 
+def _frame_signal(
+    audio: np.ndarray,
+    sample_rate: int,
+    window_duration_s: float,
+    overlap_ratio: float,
+) -> tuple[np.ndarray, int, int]:
+    """Return overlapping analysis frames [n_frames, frame_size]."""
+
+    frame_size = max(1, int(sample_rate * window_duration_s))
+    overlap_ratio = float(np.clip(overlap_ratio, 0.0, 0.95))
+    hop_size = max(1, int(frame_size * (1.0 - overlap_ratio)))
+
+    if audio.size <= frame_size:
+        padded = np.pad(audio, (0, max(0, frame_size - audio.size)), mode="constant")
+        return padded.reshape(1, frame_size), frame_size, hop_size
+
+    starts = np.arange(0, audio.size - frame_size + 1, hop_size, dtype=np.int64)
+    if starts[-1] + frame_size < audio.size:
+        starts = np.concatenate([starts, np.array([audio.size - frame_size])])
+    frames = np.stack([audio[start : start + frame_size] for start in starts], axis=0)
+    return frames, frame_size, hop_size
+
+
+def _short_time_metrics(
+    audio: np.ndarray,
+    sample_rate: int,
+    tuning: AnalysisTuning,
+    window_duration_s: float = 0.3,
+    overlap_ratio: float = 0.5,
+) -> TemporalTrackMetrics:
+    """Compute temporal descriptors over short overlapping windows."""
+
+    if audio.size == 0:
+        return TemporalTrackMetrics()
+
+    frames, frame_size, hop_size = _frame_signal(
+        audio,
+        sample_rate=sample_rate,
+        window_duration_s=window_duration_s,
+        overlap_ratio=overlap_ratio,
+    )
+    frame_times = tuple(
+        ((idx * hop_size) + (0.5 * frame_size)) / sample_rate
+        for idx in range(frames.shape[0])
+    )
+
+    loudness_envelope = tuple(float(_rms_db(frame)) for frame in frames)
+
+    band_edges_hz = np.asarray(tuning.eq_band_edges_hz, dtype=np.float64)
+    band_centers, _ = _band_energies(frames[0], sample_rate=sample_rate, edges_hz=band_edges_hz)
+    per_frame_band_energies: list[tuple[float, ...]] = []
+    crest_factors: list[float] = []
+    transient_density: list[float] = []
+    for frame in frames:
+        _, band_energy = _band_energies(frame, sample_rate=sample_rate, edges_hz=band_edges_hz)
+        normalized_band_energy = band_energy / (float(np.sum(band_energy)) + 1e-12)
+        per_frame_band_energies.append(tuple(float(v) for v in normalized_band_energy))
+
+        peak = float(np.max(np.abs(frame)))
+        rms_linear = float(np.sqrt(np.mean(np.square(frame), dtype=np.float64)))
+        crest_factors.append(float(20.0 * np.log10((peak + 1e-12) / (rms_linear + 1e-12))))
+
+        if frame.size <= 1:
+            transient_density.append(0.0)
+            continue
+        diff = np.abs(np.diff(frame, prepend=frame[0]))
+        threshold = float(np.mean(diff) + 2.0 * np.std(diff))
+        transient_density.append(float(np.mean(diff > threshold)))
+
+    return TemporalTrackMetrics(
+        frame_times_s=frame_times,
+        loudness_envelope_db=loudness_envelope,
+        band_centers_hz=tuple(float(v) for v in band_centers),
+        multiband_energy_trajectories=tuple(per_frame_band_energies),
+        transient_density_trajectory=tuple(transient_density),
+        crest_factor_trajectory_db=tuple(crest_factors),
+        mean_transient_density=float(np.mean(transient_density)) if transient_density else 0.0,
+        peak_transient_density=float(np.max(transient_density)) if transient_density else 0.0,
+        mean_crest_factor_db=float(np.mean(crest_factors)) if crest_factors else 0.0,
+        peak_crest_factor_db=float(np.max(crest_factors)) if crest_factors else 0.0,
+    )
+
+
 def resolve_analysis_tuning(profile: str = "default") -> AnalysisTuning:
     try:
         return ANALYSIS_TUNINGS[profile]
@@ -317,6 +418,16 @@ def analyze_tracks(
         eq_band_corrections=_derive_eq_band_corrections(
             target_audio=target_normalized,
             reference_audio=reference_normalized,
+            sample_rate=sample_rate,
+            tuning=tuning,
+        ),
+        target_temporal=_short_time_metrics(
+            target_normalized,
+            sample_rate=sample_rate,
+            tuning=tuning,
+        ),
+        reference_temporal=_short_time_metrics(
+            reference_normalized,
             sample_rate=sample_rate,
             tuning=tuning,
         ),
