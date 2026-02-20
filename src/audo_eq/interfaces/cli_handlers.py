@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
+import json
 
 from audo_eq.application.mastering_service import (
     MasterTrackAgainstReference,
@@ -24,14 +26,19 @@ def master_from_paths(
     eq_mode: EqMode,
     eq_preset: EqPreset,
     de_esser_mode: DeEsserMode,
+    report_json: Path | None = None,
 ) -> Path:
     request = validate_ingest.ingest_local_mastering_request(
         target, reference, output, correlation_id=correlation_id
     )
-    return mastering_service.master_file(
+    written_path, diagnostics = mastering_service.master_file_with_diagnostics(
         request,
         correlation_id=correlation_id,
         eq_mode=eq_mode,
         eq_preset=eq_preset,
         de_esser_mode=de_esser_mode,
     )
+    if report_json is not None:
+        report_json.parent.mkdir(parents=True, exist_ok=True)
+        report_json.write_text(json.dumps(asdict(diagnostics), indent=2))
+    return written_path

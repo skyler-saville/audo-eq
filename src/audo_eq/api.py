@@ -1,5 +1,6 @@
 """FastAPI interface for Audo_EQ."""
 
+import json
 import os
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from .application.mastered_artifact_repository import (
 from .interfaces.api_handlers import (
     IngestValidationError,
     build_asset,
+    diagnostics_to_dict,
     master_uploaded_bytes,
 )
 from .mastering_options import (
@@ -147,7 +149,7 @@ async def master(
     correlation_id = x_correlation_id or str(uuid4())
 
     try:
-        mastered_bytes = master_bytes(
+        mastered_payload = master_bytes(
             target_bytes=target_asset.raw_bytes,
             reference_bytes=reference_asset.raw_bytes,
             eq_mode=parsed_eq_mode,
@@ -160,6 +162,13 @@ async def master(
             status_code=400, detail={"code": "invalid_payload", "message": str(error)}
         ) from error
 
+
+    if isinstance(mastered_payload, tuple):
+        mastered_bytes, diagnostics = mastered_payload
+    else:
+        mastered_bytes = mastered_payload
+        diagnostics = None
+
     response = Response(content=mastered_bytes, media_type="audio/wav")
 
     response.headers["X-Correlation-Id"] = correlation_id
@@ -169,6 +178,11 @@ async def master(
         DEFAULT_NORMALIZATION_POLICY.policy_id
     )
     response.headers["X-Mastering-Profile-Id"] = DEFAULT_MASTERING_PROFILE.profile_id
+    if diagnostics is not None:
+        response.headers["X-Mastering-Diagnostics"] = json.dumps(
+            diagnostics_to_dict(diagnostics),
+            separators=(",", ":"),
+        )
 
     object_name = f"mastered/{uuid4()}.wav"
     persistence_policy = _resolve_persistence_policy()

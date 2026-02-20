@@ -237,3 +237,19 @@ If you are extending the pipeline, start with these modules:
 - `audo_eq.core` for orchestration and interface invariants.
 
 Keep transport concerns in API/CLI layers and mastering behavior in the core pipeline so both interfaces remain behaviorally identical.
+
+
+## Diagnostics output
+
+The pipeline now emits a structured diagnostics DTO (`MasteringDiagnostics`) from `MasterTrackAgainstReference.run_pipeline`. The DTO includes:
+
+- input/reference/output LUFS,
+- crest-factor delta between reference and target analyses,
+- low/mid/high spectral balance deltas,
+- limiter ceiling + measured true peak (and margin),
+- applied chain parameters (EQ/de-esser mode + key dynamics settings).
+
+Surface area:
+
+- API: returned in `X-Mastering-Diagnostics` response header as compact JSON.
+- CLI: persisted via `--report-json <path>` when requested.
