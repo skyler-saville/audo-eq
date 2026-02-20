@@ -7,9 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from .application.mastering_service import MasterTrackAgainstReference, ValidateIngest
-from .domain.models import AudioAsset, MasteringRequest, MasteringResult, ValidationStatus
+from .domain.models import (
+    AudioAsset,
+    MasteringRequest,
+    MasteringResult,
+    ValidationStatus,
+)
 from .ingest_validation import AudioMetadata
-from .mastering_options import EqMode, EqPreset
+from .mastering_options import DeEsserMode, EqMode, EqPreset
 
 _validate_ingest = ValidateIngest()
 _mastering_service = MasterTrackAgainstReference()
@@ -23,7 +28,9 @@ def _compute_loudness_gain_delta_db(target_lufs: float, reference_lufs: float) -
     return compute_loudness_gain_delta_db(target_lufs, reference_lufs)
 
 
-def _asset_from_metadata(source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
+def _asset_from_metadata(
+    source_uri: str, raw_bytes: bytes, metadata: AudioMetadata
+) -> AudioAsset:
     return _validate_ingest.asset_from_metadata(source_uri, raw_bytes, metadata)
 
 
@@ -57,8 +64,16 @@ def _run_mastering_pipeline(
     sample_rate: int,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> MasteringResult:
-    return _mastering_service.run_pipeline(target_audio, reference_audio, sample_rate, eq_mode=eq_mode, eq_preset=eq_preset)
+    return _mastering_service.run_pipeline(
+        target_audio,
+        reference_audio,
+        sample_rate,
+        eq_mode=eq_mode,
+        eq_preset=eq_preset,
+        de_esser_mode=de_esser_mode,
+    )
 
 
 def _master_audio_to_path(
@@ -68,6 +83,7 @@ def _master_audio_to_path(
     output_path: Path,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> MasteringResult:
     return _mastering_service.master_to_path(
         target_audio=target_audio,
@@ -76,6 +92,7 @@ def _master_audio_to_path(
         output_path=output_path,
         eq_mode=eq_mode,
         eq_preset=eq_preset,
+        de_esser_mode=de_esser_mode,
     )
 
 
@@ -85,6 +102,7 @@ def master_bytes(
     correlation_id: str | None = None,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> bytes:
     return _mastering_service.master_bytes(
         target_bytes,
@@ -92,6 +110,7 @@ def master_bytes(
         correlation_id=correlation_id,
         eq_mode=eq_mode,
         eq_preset=eq_preset,
+        de_esser_mode=de_esser_mode,
     )
 
 
@@ -100,5 +119,12 @@ def master_file(
     correlation_id: str | None = None,
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> Path:
-    return _mastering_service.master_file(request, correlation_id=correlation_id, eq_mode=eq_mode, eq_preset=eq_preset)
+    return _mastering_service.master_file(
+        request,
+        correlation_id=correlation_id,
+        eq_mode=eq_mode,
+        eq_preset=eq_preset,
+        de_esser_mode=de_esser_mode,
+    )

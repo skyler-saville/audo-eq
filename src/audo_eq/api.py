@@ -6,7 +6,11 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
-from .domain.policies import DEFAULT_INGEST_POLICY, DEFAULT_MASTERING_PROFILE, DEFAULT_NORMALIZATION_POLICY
+from .domain.policies import (
+    DEFAULT_INGEST_POLICY,
+    DEFAULT_MASTERING_PROFILE,
+    DEFAULT_NORMALIZATION_POLICY,
+)
 from .application.artifact_persistence_service import PersistMasteredArtifact
 from .application.mastered_artifact_repository import (
     ArtifactPersistenceError,
@@ -14,8 +18,18 @@ from .application.mastered_artifact_repository import (
     PersistenceMode,
     PersistencePolicy,
 )
-from .interfaces.api_handlers import IngestValidationError, build_asset, master_uploaded_bytes
-from .mastering_options import EqMode, EqPreset, enum_values, parse_case_insensitive_enum
+from .interfaces.api_handlers import (
+    IngestValidationError,
+    build_asset,
+    master_uploaded_bytes,
+)
+from .mastering_options import (
+    DeEsserMode,
+    EqMode,
+    EqPreset,
+    enum_values,
+    parse_case_insensitive_enum,
+)
 from .domain.events import ArtifactStored
 from .infrastructure.mastered_artifact_repositories import (
     DeferredMasteredArtifactRepository,
@@ -35,9 +49,14 @@ def _build_repository_for_mode(mode: PersistenceMode):
 
 
 def _resolve_persistence_policy() -> PersistencePolicy:
-    mode = PersistenceMode(os.getenv("AUDO_EQ_ARTIFACT_PERSISTENCE_MODE", PersistenceMode.IMMEDIATE.value))
+    mode = PersistenceMode(
+        os.getenv("AUDO_EQ_ARTIFACT_PERSISTENCE_MODE", PersistenceMode.IMMEDIATE.value)
+    )
     guarantee = PersistenceGuarantee(
-        os.getenv("AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE", PersistenceGuarantee.BEST_EFFORT.value)
+        os.getenv(
+            "AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE",
+            PersistenceGuarantee.BEST_EFFORT.value,
+        )
     )
     return PersistencePolicy(mode=mode, guarantee=guarantee)
 
@@ -53,8 +72,17 @@ def health() -> dict[str, str]:
 async def master(
     target: UploadFile = File(..., description="Target audio file"),
     reference: UploadFile = File(..., description="Reference audio file"),
-    eq_mode: str = Query(EqMode.FIXED.value, description="EQ strategy: fixed or reference-match."),
-    eq_preset: str = Query(EqPreset.NEUTRAL.value, description="EQ preset voicing to apply pre-compression."),
+    eq_mode: str = Query(
+        EqMode.FIXED.value, description="EQ strategy: fixed or reference-match."
+    ),
+    eq_preset: str = Query(
+        EqPreset.NEUTRAL.value,
+        description="EQ preset voicing to apply pre-compression.",
+    ),
+    de_esser_mode: str = Query(
+        DeEsserMode.OFF.value,
+        description="Optional de-esser stage before final limiting.",
+    ),
     x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
 ) -> Response:
     """Master target audio using a reference track and return mastered bytes."""
@@ -86,15 +114,34 @@ async def master(
         ) from error
 
     try:
+        parsed_de_esser_mode = parse_case_insensitive_enum(de_esser_mode, DeEsserMode)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_query_parameter",
+                "message": str(error),
+                "parameter": "de_esser_mode",
+                "allowed_values": list(enum_values(DeEsserMode)),
+            },
+        ) from error
+
+    try:
         target_bytes = await target.read()
-        target_asset = build_asset(f"upload://{target.filename or 'target'}", target_bytes, target.filename)
+        target_asset = build_asset(
+            f"upload://{target.filename or 'target'}", target_bytes, target.filename
+        )
 
         reference_bytes = await reference.read()
         reference_asset = build_asset(
-            f"upload://{reference.filename or 'reference'}", reference_bytes, reference.filename
+            f"upload://{reference.filename or 'reference'}",
+            reference_bytes,
+            reference.filename,
         )
     except IngestValidationError as error:
-        status = 415 if error.code in {"unsupported_container", "unsupported_codec"} else 400
+        status = (
+            415 if error.code in {"unsupported_container", "unsupported_codec"} else 400
+        )
         raise HTTPException(status_code=status, detail=error.as_dict()) from error
 
     correlation_id = x_correlation_id or str(uuid4())
@@ -105,17 +152,22 @@ async def master(
             reference_bytes=reference_asset.raw_bytes,
             eq_mode=parsed_eq_mode,
             eq_preset=parsed_eq_preset,
+            de_esser_mode=parsed_de_esser_mode,
             correlation_id=correlation_id,
         )
     except ValueError as error:
-        raise HTTPException(status_code=400, detail={"code": "invalid_payload", "message": str(error)}) from error
+        raise HTTPException(
+            status_code=400, detail={"code": "invalid_payload", "message": str(error)}
+        ) from error
 
     response = Response(content=mastered_bytes, media_type="audio/wav")
 
     response.headers["X-Correlation-Id"] = correlation_id
     response.headers["X-Policy-Version"] = DEFAULT_MASTERING_PROFILE.policy_version
     response.headers["X-Ingest-Policy-Id"] = DEFAULT_INGEST_POLICY.policy_id
-    response.headers["X-Normalization-Policy-Id"] = DEFAULT_NORMALIZATION_POLICY.policy_id
+    response.headers["X-Normalization-Policy-Id"] = (
+        DEFAULT_NORMALIZATION_POLICY.policy_id
+    )
     response.headers["X-Mastering-Profile-Id"] = DEFAULT_MASTERING_PROFILE.profile_id
 
     object_name = f"mastered/{uuid4()}.wav"
@@ -133,7 +185,10 @@ async def master(
     except ArtifactPersistenceError as error:
         raise HTTPException(
             status_code=503,
-            detail={"code": "storage_unavailable", "message": "failed to persist mastered audio"},
+            detail={
+                "code": "storage_unavailable",
+                "message": "failed to persist mastered audio",
+            },
         ) from error
 
     if persistence_result.object_url:
@@ -147,7 +202,10 @@ async def master(
         _event_publisher.publish(
             ArtifactStored(
                 correlation_id=correlation_id,
-                payload_summary={"destination": persistence_result.destination, "storage_kind": persistence_result.status},
+                payload_summary={
+                    "destination": persistence_result.destination,
+                    "storage_kind": persistence_result.status,
+                },
             )
         )
 

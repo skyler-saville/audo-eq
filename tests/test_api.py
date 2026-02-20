@@ -9,7 +9,9 @@ from audo_eq.api import app
 client = TestClient(app)
 
 
-def make_wav_bytes(*, duration_seconds: float = 0.1, sample_rate: int = 48_000, channels: int = 2) -> bytes:
+def make_wav_bytes(
+    *, duration_seconds: float = 0.1, sample_rate: int = 48_000, channels: int = 2
+) -> bytes:
     frames = int(duration_seconds * sample_rate)
     with io.BytesIO() as buffer:
         with wave.open(buffer, "wb") as wav:
@@ -25,11 +27,18 @@ def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> N
         "audo_eq.api.master_bytes",
         lambda **kwargs: make_wav_bytes(),
     )
+
     class _Repo:
         def persist(self, **kwargs):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
-            return PersistedArtifact(status="stored", object_url="https://storage.local/mastered/file.wav", destination="https://storage.local/mastered/file.wav")
+            return PersistedArtifact(
+                status="stored",
+                object_url="https://storage.local/mastered/file.wav",
+                destination="https://storage.local/mastered/file.wav",
+            )
 
     monkeypatch.setattr("audo_eq.api._build_repository_for_mode", lambda mode: _Repo())
 
@@ -42,7 +51,10 @@ def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> N
     )
 
     assert response.status_code == 200
-    assert response.headers["x-mastered-object-url"] == "https://storage.local/mastered/file.wav"
+    assert (
+        response.headers["x-mastered-object-url"]
+        == "https://storage.local/mastered/file.wav"
+    )
     assert response.headers["x-policy-version"] == "v1"
     assert response.headers["x-ingest-policy-id"] == "ingest-validation-default"
     assert response.headers["x-normalization-policy-id"] == "pcm-canonical-default"
@@ -52,22 +64,34 @@ def test_master_returns_storage_header_when_object_is_uploaded(monkeypatch) -> N
 def test_master_forwards_eq_mode(monkeypatch) -> None:
     captured = {}
 
-    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset, correlation_id):
+    def fake_master_bytes(
+        *,
+        target_bytes: bytes,
+        reference_bytes: bytes,
+        eq_mode,
+        eq_preset,
+        de_esser_mode,
+        correlation_id,
+    ):
         captured["eq_mode"] = eq_mode
         captured["eq_preset"] = eq_preset
+        captured["de_esser_mode"] = de_esser_mode
         return make_wav_bytes()
 
     monkeypatch.setattr("audo_eq.api.master_bytes", fake_master_bytes)
+
     class _Repo:
         def persist(self, **kwargs):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
             return PersistedArtifact(status="skipped")
 
     monkeypatch.setattr("audo_eq.api._build_repository_for_mode", lambda mode: _Repo())
 
     response = client.post(
-        "/master?eq_mode=reference-match&eq_preset=warm",
+        "/master?eq_mode=reference-match&eq_preset=warm&de_esser_mode=auto",
         files={
             "target": ("target.wav", make_wav_bytes(), "audio/wav"),
             "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
@@ -77,27 +101,40 @@ def test_master_forwards_eq_mode(monkeypatch) -> None:
     assert response.status_code == 200
     assert captured["eq_mode"].value == "reference-match"
     assert captured["eq_preset"].value == "warm"
+    assert captured["de_esser_mode"].value == "auto"
 
 
 def test_master_parses_query_options_case_insensitively(monkeypatch) -> None:
     captured = {}
 
-    def fake_master_bytes(*, target_bytes: bytes, reference_bytes: bytes, eq_mode, eq_preset, correlation_id):
+    def fake_master_bytes(
+        *,
+        target_bytes: bytes,
+        reference_bytes: bytes,
+        eq_mode,
+        eq_preset,
+        de_esser_mode,
+        correlation_id,
+    ):
         captured["eq_mode"] = eq_mode
         captured["eq_preset"] = eq_preset
+        captured["de_esser_mode"] = de_esser_mode
         return make_wav_bytes()
 
     monkeypatch.setattr("audo_eq.api.master_bytes", fake_master_bytes)
+
     class _Repo:
         def persist(self, **kwargs):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
             return PersistedArtifact(status="skipped")
 
     monkeypatch.setattr("audo_eq.api._build_repository_for_mode", lambda mode: _Repo())
 
     response = client.post(
-        "/master?eq_mode=REFERENCE-MATCH&eq_preset=WARM",
+        "/master?eq_mode=REFERENCE-MATCH&eq_preset=WARM&de_esser_mode=AUTO",
         files={
             "target": ("target.wav", make_wav_bytes(), "audio/wav"),
             "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
@@ -107,6 +144,7 @@ def test_master_parses_query_options_case_insensitively(monkeypatch) -> None:
     assert response.status_code == 200
     assert captured["eq_mode"].value == "reference-match"
     assert captured["eq_preset"].value == "warm"
+    assert captured["de_esser_mode"].value == "auto"
 
 
 def test_master_rejects_invalid_eq_preset_with_400() -> None:
@@ -131,13 +169,33 @@ def test_master_rejects_invalid_eq_preset_with_400() -> None:
     ]
 
 
-def test_master_returns_bytes_when_immediate_persistence_skips_best_effort(monkeypatch) -> None:
+def test_master_rejects_invalid_de_esser_mode_with_400() -> None:
+    response = client.post(
+        "/master?de_esser_mode=unknown",
+        files={
+            "target": ("target.wav", make_wav_bytes(), "audio/wav"),
+            "reference": ("reference.wav", make_wav_bytes(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"]["code"] == "invalid_query_parameter"
+    assert payload["detail"]["parameter"] == "de_esser_mode"
+    assert payload["detail"]["allowed_values"] == ["off", "auto"]
+
+
+def test_master_returns_bytes_when_immediate_persistence_skips_best_effort(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("AUDO_EQ_ARTIFACT_PERSISTENCE_MODE", "immediate")
     monkeypatch.setenv("AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE", "best-effort")
 
     class _Repo:
         def persist(self, **kwargs):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
             return PersistedArtifact(status="skipped")
 
@@ -157,13 +215,17 @@ def test_master_returns_bytes_when_immediate_persistence_skips_best_effort(monke
     assert response.headers["x-artifact-persistence-status"] == "skipped"
 
 
-def test_master_returns_503_when_immediate_persistence_is_guaranteed(monkeypatch) -> None:
+def test_master_returns_503_when_immediate_persistence_is_guaranteed(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("AUDO_EQ_ARTIFACT_PERSISTENCE_MODE", "immediate")
     monkeypatch.setenv("AUDO_EQ_ARTIFACT_PERSISTENCE_GUARANTEE", "guaranteed")
 
     class _Repo:
         def persist(self, **kwargs):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
             return PersistedArtifact(status="skipped")
 
@@ -225,7 +287,10 @@ def test_master_rejects_invalid_or_corrupt_uploads() -> None:
 
 
 def test_master_maps_value_error_to_invalid_payload(monkeypatch) -> None:
-    monkeypatch.setattr("audo_eq.api.master_bytes", lambda **kwargs: (_ for _ in ()).throw(ValueError("bad payload")))
+    monkeypatch.setattr(
+        "audo_eq.api.master_bytes",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("bad payload")),
+    )
 
     response = client.post(
         "/master",
@@ -246,7 +311,9 @@ def test_master_response_media_type_falls_back_to_audio_wav(monkeypatch) -> None
 
     class _Repo:
         def persist(self, *, object_name: str, audio_bytes: bytes, content_type: str):
-            from audo_eq.application.mastered_artifact_repository import PersistedArtifact
+            from audo_eq.application.mastered_artifact_repository import (
+                PersistedArtifact,
+            )
 
             captured["content_type"] = content_type
             return PersistedArtifact(status="skipped")

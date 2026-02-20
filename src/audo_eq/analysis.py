@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+
 @dataclass(frozen=True, slots=True)
 class AnalysisTuning:
     """Tunable constants for analysis and reference-match EQ derivation."""
@@ -19,21 +20,54 @@ class AnalysisTuning:
 
 ANALYSIS_TUNINGS: dict[str, AnalysisTuning] = {
     "default": AnalysisTuning(
-        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_band_edges_hz=(
+            20.0,
+            60.0,
+            120.0,
+            250.0,
+            500.0,
+            1_000.0,
+            2_000.0,
+            4_000.0,
+            8_000.0,
+            16_000.0,
+        ),
         eq_smoothing_kernel=(0.25, 0.5, 0.25),
         eq_max_abs_db=4.0,
         eq_min_correction_db=0.75,
         target_normalized_rms_db=-24.0,
     ),
     "conservative": AnalysisTuning(
-        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_band_edges_hz=(
+            20.0,
+            60.0,
+            120.0,
+            250.0,
+            500.0,
+            1_000.0,
+            2_000.0,
+            4_000.0,
+            8_000.0,
+            16_000.0,
+        ),
         eq_smoothing_kernel=(0.2, 0.6, 0.2),
         eq_max_abs_db=3.0,
         eq_min_correction_db=1.0,
         target_normalized_rms_db=-24.0,
     ),
     "aggressive": AnalysisTuning(
-        eq_band_edges_hz=(20.0, 60.0, 120.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0),
+        eq_band_edges_hz=(
+            20.0,
+            60.0,
+            120.0,
+            250.0,
+            500.0,
+            1_000.0,
+            2_000.0,
+            4_000.0,
+            8_000.0,
+            16_000.0,
+        ),
         eq_smoothing_kernel=(0.3, 0.4, 0.3),
         eq_max_abs_db=5.5,
         eq_min_correction_db=0.5,
@@ -60,6 +94,7 @@ class TrackMetrics:
     low_band_energy: float
     mid_band_energy: float
     high_band_energy: float
+    sibilance_ratio: float
     crest_factor_db: float
     is_clipping: bool
     is_silent: bool
@@ -84,6 +119,10 @@ class AnalysisPayload:
     @property
     def rolloff_delta_hz(self) -> float:
         return self.reference.spectral_rolloff_hz - self.target.spectral_rolloff_hz
+
+    @property
+    def sibilance_ratio_delta(self) -> float:
+        return self.target.sibilance_ratio - self.reference.sibilance_ratio
 
 
 def _mono(audio: np.ndarray) -> np.ndarray:
@@ -117,13 +156,15 @@ def _normalize_to_target_rms(audio: np.ndarray, target_rms_db: float) -> np.ndar
     return np.clip(normalized, -1.0, 1.0)
 
 
-def _spectral_metrics(audio: np.ndarray, sample_rate: int) -> tuple[float, float, float, float, float]:
+def _spectral_metrics(
+    audio: np.ndarray, sample_rate: int
+) -> tuple[float, float, float, float, float, float]:
     if audio.size == 0:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     spectrum = np.abs(np.fft.rfft(audio))
     if not np.any(spectrum):
-        return 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     freqs = np.fft.rfftfreq(audio.size, d=1.0 / sample_rate)
     weight_sum = float(np.sum(spectrum))
@@ -136,15 +177,19 @@ def _spectral_metrics(audio: np.ndarray, sample_rate: int) -> tuple[float, float
     energy = np.square(spectrum, dtype=np.float64)
     total_energy = float(np.sum(energy))
     if total_energy <= 0:
-        return centroid, rolloff, 0.0, 0.0, 0.0
+        return centroid, rolloff, 0.0, 0.0, 0.0, 0.0
 
     low = float(np.sum(energy[freqs < 200.0]) / total_energy)
     mid = float(np.sum(energy[(freqs >= 200.0) & (freqs < 4_000.0)]) / total_energy)
     high = float(np.sum(energy[freqs >= 4_000.0]) / total_energy)
-    return centroid, rolloff, low, mid, high
+    sibilant = float(np.sum(energy[(freqs >= 5_000.0) & (freqs <= 10_000.0)]))
+    sibilance_ratio = float(sibilant / (total_energy + 1e-12))
+    return centroid, rolloff, low, mid, high, sibilance_ratio
 
 
-def _band_energies(audio: np.ndarray, sample_rate: int, edges_hz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _band_energies(
+    audio: np.ndarray, sample_rate: int, edges_hz: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """Average energy per octave-ish band from FFT power spectrum."""
 
     if audio.size == 0:
@@ -179,12 +224,18 @@ def _derive_eq_band_corrections(
 
     edges_hz = np.asarray(tuning.eq_band_edges_hz, dtype=np.float64)
     smoothing_kernel = np.asarray(tuning.eq_smoothing_kernel, dtype=np.float64)
-    target_centers, target_energy = _band_energies(target_audio, sample_rate, edges_hz=edges_hz)
-    reference_centers, reference_energy = _band_energies(reference_audio, sample_rate, edges_hz=edges_hz)
+    target_centers, target_energy = _band_energies(
+        target_audio, sample_rate, edges_hz=edges_hz
+    )
+    reference_centers, reference_energy = _band_energies(
+        reference_audio, sample_rate, edges_hz=edges_hz
+    )
     if target_energy.size == 0 or reference_energy.size == 0:
         return tuple()
 
-    if target_centers.size != reference_centers.size or not np.allclose(target_centers, reference_centers):
+    if target_centers.size != reference_centers.size or not np.allclose(
+        target_centers, reference_centers
+    ):
         raise ValueError("Band centers must match for EQ delta derivation.")
 
     target_db = 10.0 * np.log10(target_energy + 1e-12)
@@ -197,7 +248,9 @@ def _derive_eq_band_corrections(
     for center_hz, delta_db in zip(target_centers, bounded):
         if abs(delta_db) < tuning.eq_min_correction_db:
             continue
-        corrections.append(EqBandCorrection(center_hz=float(center_hz), delta_db=float(delta_db)))
+        corrections.append(
+            EqBandCorrection(center_hz=float(center_hz), delta_db=float(delta_db))
+        )
     return tuple(corrections)
 
 
@@ -206,7 +259,9 @@ def resolve_analysis_tuning(profile: str = "default") -> AnalysisTuning:
         return ANALYSIS_TUNINGS[profile]
     except KeyError as exc:
         allowed = ", ".join(sorted(ANALYSIS_TUNINGS))
-        raise ValueError(f"Unknown analysis profile '{profile}'. Allowed: {allowed}.") from exc
+        raise ValueError(
+            f"Unknown analysis profile '{profile}'. Allowed: {allowed}."
+        ) from exc
 
 
 def compute_track_metrics(audio: np.ndarray, sample_rate: int) -> TrackMetrics:
@@ -214,10 +269,14 @@ def compute_track_metrics(audio: np.ndarray, sample_rate: int) -> TrackMetrics:
 
     mono = _mono(audio)
     rms_db = _rms_db(mono)
-    centroid, rolloff, low_band, mid_band, high_band = _spectral_metrics(mono, sample_rate)
+    centroid, rolloff, low_band, mid_band, high_band, sibilance_ratio = (
+        _spectral_metrics(mono, sample_rate)
+    )
 
     peak = float(np.max(np.abs(mono))) if mono.size else 0.0
-    rms_linear = float(np.sqrt(np.mean(np.square(mono), dtype=np.float64))) if mono.size else 0.0
+    rms_linear = (
+        float(np.sqrt(np.mean(np.square(mono), dtype=np.float64))) if mono.size else 0.0
+    )
     crest_factor_db = float(20.0 * np.log10((peak + 1e-12) / (rms_linear + 1e-12)))
 
     return TrackMetrics(
@@ -227,6 +286,7 @@ def compute_track_metrics(audio: np.ndarray, sample_rate: int) -> TrackMetrics:
         low_band_energy=low_band,
         mid_band_energy=mid_band,
         high_band_energy=high_band,
+        sibilance_ratio=sibilance_ratio,
         crest_factor_db=crest_factor_db,
         is_clipping=peak >= 0.999,
         is_silent=rms_db <= -60.0,
@@ -244,8 +304,12 @@ def analyze_tracks(
     tuning = resolve_analysis_tuning(profile)
     target_mono = _mono(target_audio)
     reference_mono = _mono(reference_audio)
-    target_normalized = _normalize_to_target_rms(target_mono, target_rms_db=tuning.target_normalized_rms_db)
-    reference_normalized = _normalize_to_target_rms(reference_mono, target_rms_db=tuning.target_normalized_rms_db)
+    target_normalized = _normalize_to_target_rms(
+        target_mono, target_rms_db=tuning.target_normalized_rms_db
+    )
+    reference_normalized = _normalize_to_target_rms(
+        reference_mono, target_rms_db=tuning.target_normalized_rms_db
+    )
 
     return AnalysisPayload(
         target=compute_track_metrics(target_audio, sample_rate),

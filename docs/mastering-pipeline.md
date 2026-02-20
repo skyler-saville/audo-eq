@@ -68,6 +68,7 @@ For each track, analysis includes:
 - RMS loudness (dBFS-style).
 - Spectral centroid and rolloff.
 - Low/mid/high band energy proportions.
+- Sibilance proxy ratio (`~5–10 kHz` energy vs total broadband energy).
 - Crest factor.
 - Clipping and silence flags.
 
@@ -92,6 +93,7 @@ This yields bounded per-band corrections (`EqBandCorrection`) that can be transl
 - **Low/high shelf gain** from energy-balance deltas (clamped).
 - **Compressor threshold + ratio** from crest-factor relationship.
 - **Limiter ceiling** based on clipping risk.
+- **Optional de-esser settings** (`threshold`, `depth`) from target/reference sibilance proxy deltas.
 
 The design goal is predictable behavior with bounded parameter ranges, avoiding extreme swings from outlier analysis values.
 
@@ -106,7 +108,8 @@ The design goal is predictable behavior with bounded parameter ranges, avoiding 
    - fixed shelves from decision payload,
    - optional reference-match shelf bank,
    - compressor,
-   - gain (decision gain + loudness delta).
+   - gain (decision gain + loudness delta),
+   - optional de-esser high-band attenuation (`de_esser_mode=auto`).
 2. Apply limiter.
 3. Measure integrated LUFS post-limiter.
 4. If LUFS misses target beyond tolerance, apply bounded post gain and re-limit.
@@ -170,6 +173,21 @@ After file mastering, the target asset metadata is updated with measured integra
 - `reference-match`: augments fixed shelves with a compact shelf-bank approximation derived from band corrections.
 
 Use `reference-match` when a closer tonal fingerprint match is desired. Use `fixed` for a more conservative, broadly musical profile.
+
+---
+
+
+## When to enable the de-esser
+
+Use `de_esser_mode=auto` when the target has clearly hotter consonants than the reference (e.g., harsh `s`, `sh`, `t` transients around `5–10 kHz`). Keep it `off` when material is already smooth up top, because unnecessary attenuation can dull cymbals/air.
+
+Good candidates:
+
+- Spoken word/podcasts with close-mic vocal harshness.
+- Bright pop vocals where the reference is less sibilant.
+- Dense, limiter-driven mixes where sibilance gets emphasized by loudness matching.
+
+Leave it disabled for already-balanced acoustic/jazz/classical material unless you hear obvious sibilant spikes after mastering.
 
 ---
 

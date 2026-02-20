@@ -17,7 +17,8 @@ from pedalboard import (
 
 from .analysis import EqBandCorrection
 from .decision import DecisionPayload
-from .mastering_options import EqMode, EqPreset
+from .mastering_options import DeEsserMode, EqMode, EqPreset
+
 
 @dataclass(frozen=True, slots=True)
 class LoudnessTuning:
@@ -37,16 +38,27 @@ class TruePeakTuning:
 
 
 LOUDNESS_TUNINGS: dict[str, LoudnessTuning] = {
-    "default": LoudnessTuning(post_limiter_lufs_tolerance=0.3, max_post_limiter_correction_db=1.5),
-    "conservative": LoudnessTuning(post_limiter_lufs_tolerance=0.45, max_post_limiter_correction_db=1.0),
-    "aggressive": LoudnessTuning(post_limiter_lufs_tolerance=0.2, max_post_limiter_correction_db=2.0),
+    "default": LoudnessTuning(
+        post_limiter_lufs_tolerance=0.3, max_post_limiter_correction_db=1.5
+    ),
+    "conservative": LoudnessTuning(
+        post_limiter_lufs_tolerance=0.45, max_post_limiter_correction_db=1.0
+    ),
+    "aggressive": LoudnessTuning(
+        post_limiter_lufs_tolerance=0.2, max_post_limiter_correction_db=2.0
+    ),
 }
 
 TRUE_PEAK_TUNINGS: dict[str, TruePeakTuning] = {
     "default": TruePeakTuning(target_dbtp=-1.0, tolerance_db=0.1, oversample_factor=4),
-    "conservative": TruePeakTuning(target_dbtp=-1.2, tolerance_db=0.08, oversample_factor=4),
-    "aggressive": TruePeakTuning(target_dbtp=-0.8, tolerance_db=0.12, oversample_factor=4),
+    "conservative": TruePeakTuning(
+        target_dbtp=-1.2, tolerance_db=0.08, oversample_factor=4
+    ),
+    "aggressive": TruePeakTuning(
+        target_dbtp=-0.8, tolerance_db=0.12, oversample_factor=4
+    ),
 }
+
 
 @dataclass(frozen=True, slots=True)
 class EqPresetTuning:
@@ -61,15 +73,21 @@ class EqPresetTuning:
 
 EQ_PRESET_TUNINGS: dict[EqPreset, EqPresetTuning] = {
     EqPreset.NEUTRAL: EqPresetTuning(),
-    EqPreset.WARM: EqPresetTuning(low_shelf_offset_db=1.5, high_shelf_offset_db=-0.8, low_band_bias_db=0.5),
-    EqPreset.BRIGHT: EqPresetTuning(low_shelf_offset_db=-0.8, high_shelf_offset_db=1.8, high_band_bias_db=0.4),
+    EqPreset.WARM: EqPresetTuning(
+        low_shelf_offset_db=1.5, high_shelf_offset_db=-0.8, low_band_bias_db=0.5
+    ),
+    EqPreset.BRIGHT: EqPresetTuning(
+        low_shelf_offset_db=-0.8, high_shelf_offset_db=1.8, high_band_bias_db=0.4
+    ),
     EqPreset.VOCAL_PRESENCE: EqPresetTuning(
         low_shelf_offset_db=-0.6,
         high_shelf_offset_db=1.2,
         mid_band_bias_db=0.8,
         high_band_bias_db=0.2,
     ),
-    EqPreset.BASS_BOOST: EqPresetTuning(low_shelf_offset_db=2.0, high_shelf_offset_db=-0.5, low_band_bias_db=0.8),
+    EqPreset.BASS_BOOST: EqPresetTuning(
+        low_shelf_offset_db=2.0, high_shelf_offset_db=-0.5, low_band_bias_db=0.8
+    ),
 }
 
 EQ_PRESET_TO_PROFILE: dict[EqPreset, str] = {
@@ -87,7 +105,9 @@ MASTERING_PROFILE_ALIASES: dict[str, str] = {
 }
 
 
-def resolve_mastering_profile(eq_preset: EqPreset, mastering_profile: str | None = None) -> str:
+def resolve_mastering_profile(
+    eq_preset: EqPreset, mastering_profile: str | None = None
+) -> str:
     if mastering_profile is not None:
         normalized = mastering_profile.strip().lower()
         if normalized in MASTERING_PROFILE_ALIASES:
@@ -95,7 +115,9 @@ def resolve_mastering_profile(eq_preset: EqPreset, mastering_profile: str | None
         if normalized in LOUDNESS_TUNINGS:
             return normalized
         allowed = ", ".join(sorted(LOUDNESS_TUNINGS))
-        raise ValueError(f"Unknown mastering profile '{mastering_profile}'. Allowed: {allowed}.")
+        raise ValueError(
+            f"Unknown mastering profile '{mastering_profile}'. Allowed: {allowed}."
+        )
     return EQ_PRESET_TO_PROFILE[eq_preset]
 
 
@@ -143,7 +165,9 @@ def measure_true_peak_dbtp(audio: np.ndarray, oversample_factor: int = 4) -> flo
     if audio_float.ndim == 1:
         channels = (audio_float,)
     else:
-        channels = tuple(audio_float[channel_index] for channel_index in range(audio_float.shape[0]))
+        channels = tuple(
+            audio_float[channel_index] for channel_index in range(audio_float.shape[0])
+        )
 
     max_abs_peak = 0.0
     for channel in channels:
@@ -153,7 +177,12 @@ def measure_true_peak_dbtp(audio: np.ndarray, oversample_factor: int = 4) -> flo
             oversampled = channel
         else:
             base_positions = np.arange(channel.size, dtype=np.float64)
-            oversampled_positions = np.linspace(0.0, channel.size - 1, channel.size * oversample_factor, dtype=np.float64)
+            oversampled_positions = np.linspace(
+                0.0,
+                channel.size - 1,
+                channel.size * oversample_factor,
+                dtype=np.float64,
+            )
             oversampled = np.interp(oversampled_positions, base_positions, channel)
         channel_peak = float(np.max(np.abs(oversampled)))
         max_abs_peak = max(max_abs_peak, channel_peak)
@@ -171,7 +200,9 @@ def apply_true_peak_guard(
 ) -> np.ndarray:
     """Apply post-limiter TP guard by gain trim and re-limiting when needed."""
 
-    measured_dbtp = measure_true_peak_dbtp(audio, oversample_factor=tuning.oversample_factor)
+    measured_dbtp = measure_true_peak_dbtp(
+        audio, oversample_factor=tuning.oversample_factor
+    )
     tp_overshoot_db = measured_dbtp - tuning.target_dbtp
     if tp_overshoot_db <= tuning.tolerance_db:
         return audio
@@ -198,20 +229,61 @@ def _build_reference_match_eq_stage(
     plugins: list = []
     for correction in eq_band_corrections:
         center_hz = correction.center_hz
-        gain_db = float(correction.delta_db) + _band_bias_for_frequency(center_hz, tuning)
+        gain_db = float(correction.delta_db) + _band_bias_for_frequency(
+            center_hz, tuning
+        )
         if center_hz <= 250.0:
-            plugins.append(LowShelfFilter(cutoff_frequency_hz=max(40.0, center_hz), gain_db=round(float(gain_db), 6)))
+            plugins.append(
+                LowShelfFilter(
+                    cutoff_frequency_hz=max(40.0, center_hz),
+                    gain_db=round(float(gain_db), 6),
+                )
+            )
             continue
 
         if center_hz >= 4_000.0:
-            plugins.append(HighShelfFilter(cutoff_frequency_hz=min(12_000.0, center_hz), gain_db=round(float(gain_db), 6)))
+            plugins.append(
+                HighShelfFilter(
+                    cutoff_frequency_hz=min(12_000.0, center_hz),
+                    gain_db=round(float(gain_db), 6),
+                )
+            )
             continue
 
         # Approximate a broad bell with opposing shelves around the center.
-        plugins.append(LowShelfFilter(cutoff_frequency_hz=max(100.0, center_hz / 1.6), gain_db=round(float(gain_db * 0.5), 6)))
-        plugins.append(HighShelfFilter(cutoff_frequency_hz=min(10_000.0, center_hz * 1.6), gain_db=round(float(-gain_db * 0.5), 6)))
+        plugins.append(
+            LowShelfFilter(
+                cutoff_frequency_hz=max(100.0, center_hz / 1.6),
+                gain_db=round(float(gain_db * 0.5), 6),
+            )
+        )
+        plugins.append(
+            HighShelfFilter(
+                cutoff_frequency_hz=min(10_000.0, center_hz * 1.6),
+                gain_db=round(float(-gain_db * 0.5), 6),
+            )
+        )
 
     return plugins
+
+
+def _build_optional_de_esser_stage(
+    decision: DecisionPayload, de_esser_mode: DeEsserMode
+) -> list:
+    """Build a lightweight static de-esser stage when enabled."""
+
+    if de_esser_mode is DeEsserMode.OFF:
+        return []
+
+    if decision.de_esser_depth_db <= 0.0:
+        return []
+
+    return [
+        HighShelfFilter(
+            cutoff_frequency_hz=6_500.0,
+            gain_db=round(float(-decision.de_esser_depth_db), 6),
+        )
+    ]
 
 
 def build_dsp_chain(
@@ -219,6 +291,7 @@ def build_dsp_chain(
     eq_mode: EqMode = EqMode.FIXED,
     eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> Pedalboard:
     """Build the mastering DSP chain from the decision payload."""
 
@@ -226,15 +299,24 @@ def build_dsp_chain(
 
     plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=round(float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6)),
+        LowShelfFilter(
+            cutoff_frequency_hz=125.0,
+            gain_db=round(
+                float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6
+            ),
+        ),
         HighShelfFilter(
             cutoff_frequency_hz=6_000.0,
-            gain_db=round(float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6),
+            gain_db=round(
+                float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6
+            ),
         ),
     ]
 
     if eq_mode is EqMode.REFERENCE_MATCH:
-        plugins.extend(_build_reference_match_eq_stage(eq_band_corrections, tuning=tuning))
+        plugins.extend(
+            _build_reference_match_eq_stage(eq_band_corrections, tuning=tuning)
+        )
 
     plugins.extend(
         [
@@ -245,9 +327,12 @@ def build_dsp_chain(
                 release_ms=120.0,
             ),
             Gain(gain_db=decision.gain_db),
-            Limiter(threshold_db=decision.limiter_ceiling_db, release_ms=150.0),
         ]
     )
+    plugins.extend(
+        _build_optional_de_esser_stage(decision, de_esser_mode=de_esser_mode)
+    )
+    plugins.append(Limiter(threshold_db=decision.limiter_ceiling_db, release_ms=150.0))
 
     return Pedalboard(plugins)
 
@@ -260,6 +345,7 @@ def apply_processing(
     eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
     mastering_profile: str | None = None,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> np.ndarray:
     """Apply the constructed DSP chain to target audio."""
 
@@ -268,6 +354,7 @@ def apply_processing(
         eq_mode=eq_mode,
         eq_preset=eq_preset,
         eq_band_corrections=eq_band_corrections,
+        de_esser_mode=de_esser_mode,
     )
     return board(target_audio, sample_rate)
 
@@ -282,24 +369,36 @@ def apply_processing_with_loudness_target(
     eq_preset: EqPreset = EqPreset.NEUTRAL,
     eq_band_corrections: tuple[EqBandCorrection, ...] = tuple(),
     mastering_profile: str | None = None,
+    de_esser_mode: DeEsserMode = DeEsserMode.OFF,
 ) -> np.ndarray:
     """Apply mastering chain with loudness targeting around the final limiter."""
 
-    profile = resolve_mastering_profile(eq_preset=eq_preset, mastering_profile=mastering_profile)
+    profile = resolve_mastering_profile(
+        eq_preset=eq_preset, mastering_profile=mastering_profile
+    )
     loudness_tuning = resolve_loudness_tuning(profile)
     true_peak_tuning = resolve_true_peak_tuning(profile)
     tuning = EQ_PRESET_TUNINGS[eq_preset]
 
     pre_limiter_plugins = [
         HighpassFilter(cutoff_frequency_hz=30.0),
-        LowShelfFilter(cutoff_frequency_hz=125.0, gain_db=round(float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6)),
+        LowShelfFilter(
+            cutoff_frequency_hz=125.0,
+            gain_db=round(
+                float(decision.low_shelf_gain_db + tuning.low_shelf_offset_db), 6
+            ),
+        ),
         HighShelfFilter(
             cutoff_frequency_hz=6_000.0,
-            gain_db=round(float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6),
+            gain_db=round(
+                float(decision.high_shelf_gain_db + tuning.high_shelf_offset_db), 6
+            ),
         ),
     ]
     if eq_mode is EqMode.REFERENCE_MATCH:
-        pre_limiter_plugins.extend(_build_reference_match_eq_stage(eq_band_corrections, tuning=tuning))
+        pre_limiter_plugins.extend(
+            _build_reference_match_eq_stage(eq_band_corrections, tuning=tuning)
+        )
 
     pre_limiter_plugins.extend(
         [
@@ -311,6 +410,9 @@ def apply_processing_with_loudness_target(
             ),
             Gain(gain_db=decision.gain_db + loudness_gain_db),
         ]
+    )
+    pre_limiter_plugins.extend(
+        _build_optional_de_esser_stage(decision, de_esser_mode=de_esser_mode)
     )
 
     pre_limiter_chain = Pedalboard(pre_limiter_plugins)
@@ -328,9 +430,13 @@ def apply_processing_with_loudness_target(
         )
     )
     if abs(correction_db) < loudness_tuning.post_limiter_lufs_tolerance:
-        return apply_true_peak_guard(limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning)
+        return apply_true_peak_guard(
+            limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning
+        )
 
     post_gain = Gain(gain_db=correction_db)
     corrected_audio = post_gain(limited_audio, sample_rate)
     corrected_limited_audio = limiter(corrected_audio, sample_rate)
-    return apply_true_peak_guard(corrected_limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning)
+    return apply_true_peak_guard(
+        corrected_limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning
+    )
