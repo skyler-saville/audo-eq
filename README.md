@@ -32,6 +32,8 @@ For a detailed stage-by-stage walkthrough (ingest, analysis, decisioning, loudne
 
 For the HTTP endpoint contract (request/response formats, error schema, and persistence behavior matrix), see **[docs/api-contract.md](docs/api-contract.md)**.
 
+For startup, health checks, incident triage, and rollback procedures, see **[docs/operations-runbook.md](docs/operations-runbook.md)**.
+
 For the domain-driven architecture plan across the next releases, see **[docs/roadmap-ddd.md](docs/roadmap-ddd.md)**.
 
 ## Setup
