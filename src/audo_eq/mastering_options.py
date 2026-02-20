@@ -23,6 +23,13 @@ class EqPreset(str, Enum):
     BASS_BOOST = "bass-boost"
 
 
+class DeEsserMode(str, Enum):
+    """Optional de-esser behavior in the mastering chain."""
+
+    OFF = "off"
+    AUTO = "auto"
+
+
 EnumT = TypeVar("EnumT", bound=Enum)
 
 
@@ -43,4 +50,3 @@ def parse_case_insensitive_enum(raw_value: str, enum_cls: type[EnumT]) -> EnumT:
     allowed = ", ".join(enum_values(enum_cls))
     enum_name = enum_cls.__name__
     raise ValueError(f"Invalid {enum_name}: '{raw_value}'. Allowed values: {allowed}.")
-

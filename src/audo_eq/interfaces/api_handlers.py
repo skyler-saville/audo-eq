@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from audo_eq.application.mastering_service import MasterTrackAgainstReference, ValidateIngest
+from audo_eq.application.mastering_service import (
+    MasterTrackAgainstReference,
+    ValidateIngest,
+)
 from audo_eq.infrastructure.logging_event_publisher import LoggingEventPublisher
 from audo_eq.ingest_validation import IngestValidationError, validate_audio_bytes
-from audo_eq.mastering_options import EqMode, EqPreset
+from audo_eq.mastering_options import DeEsserMode, EqMode, EqPreset
 
 
 _event_publisher = LoggingEventPublisher()
@@ -23,6 +26,7 @@ def master_uploaded_bytes(
     reference_bytes: bytes,
     eq_mode: EqMode,
     eq_preset: EqPreset,
+    de_esser_mode: DeEsserMode,
     correlation_id: str,
 ) -> bytes:
     return mastering_service.master_bytes(
@@ -31,6 +35,7 @@ def master_uploaded_bytes(
         correlation_id=correlation_id,
         eq_mode=eq_mode,
         eq_preset=eq_preset,
+        de_esser_mode=de_esser_mode,
     )
 
 

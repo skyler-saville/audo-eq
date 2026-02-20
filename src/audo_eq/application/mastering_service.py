@@ -11,8 +11,20 @@ import numpy as np
 from audo_eq.application.event_publisher import EventPublisher, NullEventPublisher
 from audo_eq.analysis import analyze_tracks
 from audo_eq.decision import decide_mastering
-from audo_eq.domain.events import ArtifactStored, IngestValidated, MasteringDecided, MasteringFailed, MasteringRendered, TrackAnalyzed
-from audo_eq.domain.models import AudioAsset, MasteringRequest, MasteringResult, ValidationStatus
+from audo_eq.domain.events import (
+    ArtifactStored,
+    IngestValidated,
+    MasteringDecided,
+    MasteringFailed,
+    MasteringRendered,
+    TrackAnalyzed,
+)
+from audo_eq.domain.models import (
+    AudioAsset,
+    MasteringRequest,
+    MasteringResult,
+    ValidationStatus,
+)
 from audo_eq.domain.policies import (
     DEFAULT_INGEST_POLICY,
     DEFAULT_MASTERING_PROFILE,
@@ -22,12 +34,20 @@ from audo_eq.domain.policies import (
     NormalizationPolicy,
 )
 from audo_eq.domain.services import compute_loudness_gain_delta_db
-from audo_eq.ingest_validation import AudioMetadata, validate_audio_bytes, validate_audio_file
+from audo_eq.ingest_validation import (
+    AudioMetadata,
+    validate_audio_bytes,
+    validate_audio_file,
+)
 from audo_eq.infrastructure.pedalboard_codec import load_audio_file, write_audio_file
 from audo_eq.infrastructure.temp_files import temporary_wav_path
-from audo_eq.mastering_options import EqMode, EqPreset
+from audo_eq.mastering_options import DeEsserMode, EqMode, EqPreset
 from audo_eq.normalization import normalize_audio
-from audo_eq.processing import apply_processing_with_loudness_target, measure_integrated_lufs, resolve_mastering_profile
+from audo_eq.processing import (
+    apply_processing_with_loudness_target,
+    measure_integrated_lufs,
+    resolve_mastering_profile,
+)
 
 
 @dataclass(slots=True)
@@ -37,7 +57,9 @@ class ValidateIngest:
     ingest_policy: IngestPolicy = DEFAULT_INGEST_POLICY
     event_publisher: EventPublisher = NullEventPublisher()
 
-    def asset_from_metadata(self, source_uri: str, raw_bytes: bytes, metadata: AudioMetadata) -> AudioAsset:
+    def asset_from_metadata(
+        self, source_uri: str, raw_bytes: bytes, metadata: AudioMetadata
+    ) -> AudioAsset:
         return AudioAsset(
             source_uri=source_uri,
             raw_bytes=raw_bytes,
@@ -52,7 +74,9 @@ class ValidateIngest:
             validation_status=ValidationStatus.VALIDATED,
         )
 
-    def validated_asset_from_path(self, path: Path, correlation_id: str | None = None) -> AudioAsset:
+    def validated_asset_from_path(
+        self, path: Path, correlation_id: str | None = None
+    ) -> AudioAsset:
         metadata = validate_audio_file(path)
         raw_bytes = path.read_bytes()
         asset = self.asset_from_metadata(path.resolve().as_uri(), raw_bytes, metadata)
@@ -80,8 +104,12 @@ class ValidateIngest:
     ) -> MasteringRequest:
         run_correlation_id = correlation_id or str(uuid4())
         return MasteringRequest(
-            target_asset=self.validated_asset_from_path(target_path, correlation_id=run_correlation_id),
-            reference_asset=self.validated_asset_from_path(reference_path, correlation_id=run_correlation_id),
+            target_asset=self.validated_asset_from_path(
+                target_path, correlation_id=run_correlation_id
+            ),
+            reference_asset=self.validated_asset_from_path(
+                reference_path, correlation_id=run_correlation_id
+            ),
             output_path=output_path,
             ingest_policy=self.ingest_policy,
             normalization_policy=DEFAULT_NORMALIZATION_POLICY,
@@ -107,6 +135,7 @@ class MasterTrackAgainstReference:
         correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
     ) -> MasteringResult:
         run_correlation_id = correlation_id or str(uuid4())
         target_lufs = measure_integrated_lufs(target_audio, sample_rate)
@@ -155,6 +184,7 @@ class MasterTrackAgainstReference:
             eq_preset=eq_preset,
             eq_band_corrections=analysis.eq_band_corrections,
             mastering_profile=mastering_profile_name,
+            de_esser_mode=de_esser_mode,
         )
         self.event_publisher.publish(
             MasteringRendered(
@@ -165,6 +195,7 @@ class MasterTrackAgainstReference:
                     "reference_lufs": reference_lufs,
                     "eq_mode": eq_mode.value,
                     "eq_preset": eq_preset.value,
+                    "de_esser_mode": de_esser_mode.value,
                 },
             )
         )
@@ -187,6 +218,7 @@ class MasterTrackAgainstReference:
         correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
     ) -> MasteringResult:
         run_correlation_id = correlation_id or str(uuid4())
         result = self.run_pipeline(
@@ -196,12 +228,16 @@ class MasterTrackAgainstReference:
             correlation_id=run_correlation_id,
             eq_mode=eq_mode,
             eq_preset=eq_preset,
+            de_esser_mode=de_esser_mode,
         )
         write_audio_file(output_path, result.mastered_audio, sample_rate)
         self.event_publisher.publish(
             ArtifactStored(
                 correlation_id=run_correlation_id,
-                payload_summary={"destination": output_path.as_posix(), "storage_kind": "filesystem"},
+                payload_summary={
+                    "destination": output_path.as_posix(),
+                    "storage_kind": "filesystem",
+                },
             )
         )
         return result
@@ -213,6 +249,7 @@ class MasterTrackAgainstReference:
         correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
     ) -> bytes:
         run_correlation_id = correlation_id or str(uuid4())
         if not target_bytes:
@@ -235,7 +272,9 @@ class MasterTrackAgainstReference:
             raise error
 
         target_metadata = validate_audio_bytes(target_bytes, filename="target.wav")
-        reference_metadata = validate_audio_bytes(reference_bytes, filename="reference.wav")
+        reference_metadata = validate_audio_bytes(
+            reference_bytes, filename="reference.wav"
+        )
         self.event_publisher.publish(
             IngestValidated(
                 correlation_id=run_correlation_id,
@@ -254,15 +293,23 @@ class MasterTrackAgainstReference:
             )
         )
 
-        with temporary_wav_path() as target_path, temporary_wav_path() as reference_path, temporary_wav_path() as output_path:
+        with (
+            temporary_wav_path() as target_path,
+            temporary_wav_path() as reference_path,
+            temporary_wav_path() as output_path,
+        ):
             target_path.write_bytes(target_bytes)
             reference_path.write_bytes(reference_bytes)
 
             target_audio, target_sample_rate = load_audio_file(target_path)
             reference_audio, reference_sample_rate = load_audio_file(reference_path)
 
-            normalized_target = normalize_audio(target_audio, target_sample_rate, policy=self.normalization_policy)
-            normalized_reference = normalize_audio(reference_audio, reference_sample_rate, policy=self.normalization_policy)
+            normalized_target = normalize_audio(
+                target_audio, target_sample_rate, policy=self.normalization_policy
+            )
+            normalized_reference = normalize_audio(
+                reference_audio, reference_sample_rate, policy=self.normalization_policy
+            )
 
             try:
                 self.master_to_path(
@@ -273,6 +320,7 @@ class MasterTrackAgainstReference:
                     correlation_id=run_correlation_id,
                     eq_mode=eq_mode,
                     eq_preset=eq_preset,
+                    de_esser_mode=de_esser_mode,
                 )
                 return output_path.read_bytes()
             except Exception as error:  # noqa: BLE001
@@ -290,19 +338,29 @@ class MasterTrackAgainstReference:
         correlation_id: str | None = None,
         eq_mode: EqMode = EqMode.FIXED,
         eq_preset: EqPreset = EqPreset.NEUTRAL,
+        de_esser_mode: DeEsserMode = DeEsserMode.OFF,
     ) -> Path:
         run_correlation_id = correlation_id or str(uuid4())
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with temporary_wav_path() as target_path, temporary_wav_path() as reference_path:
+        with (
+            temporary_wav_path() as target_path,
+            temporary_wav_path() as reference_path,
+        ):
             target_path.write_bytes(request.target_asset.raw_bytes)
             reference_path.write_bytes(request.reference_asset.raw_bytes)
 
             target_audio, target_sample_rate = load_audio_file(target_path)
             reference_audio, reference_sample_rate = load_audio_file(reference_path)
 
-            normalized_target = normalize_audio(target_audio, target_sample_rate, policy=request.normalization_policy)
-            normalized_reference = normalize_audio(reference_audio, reference_sample_rate, policy=request.normalization_policy)
+            normalized_target = normalize_audio(
+                target_audio, target_sample_rate, policy=request.normalization_policy
+            )
+            normalized_reference = normalize_audio(
+                reference_audio,
+                reference_sample_rate,
+                policy=request.normalization_policy,
+            )
 
             self.master_to_path(
                 target_audio=normalized_target.audio,
@@ -312,6 +370,7 @@ class MasterTrackAgainstReference:
                 correlation_id=run_correlation_id,
                 eq_mode=eq_mode,
                 eq_preset=eq_preset,
+                de_esser_mode=de_esser_mode,
             )
 
         return request.output_path
