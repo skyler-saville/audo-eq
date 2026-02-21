@@ -10,7 +10,9 @@ from audo_eq.processing import (
     EqPreset,
     apply_true_peak_guard,
     build_dsp_chain,
+    resolve_mastering_profile,
     resolve_true_peak_tuning,
+    apply_processing_with_loudness_target,
 )
 
 
@@ -173,3 +175,55 @@ def test_build_dsp_chain_skips_single_band_compressor_with_multiband_mode() -> N
 
     compressors = [plugin for plugin in chain if isinstance(plugin, Compressor)]
     assert len(compressors) == 0
+
+
+def test_resolve_mastering_profile_supports_streaming_aliases() -> None:
+    assert resolve_mastering_profile(EqPreset.NEUTRAL, mastering_profile="streaming-balanced") == "default"
+    assert resolve_mastering_profile(EqPreset.NEUTRAL, mastering_profile="streaming-loud") == "aggressive"
+
+
+def test_apply_processing_with_loudness_target_runs_iterative_convergence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = _decision()
+    source = np.array([0.1, -0.1, 0.08, -0.08], dtype=np.float32)
+
+    monkeypatch.setattr("audo_eq.processing._apply_optional_ms_gain_correction", lambda audio, **_: audio)
+    monkeypatch.setattr("audo_eq.processing._apply_optional_multiband_compression", lambda audio, **_: audio)
+
+    class _BypassChain:
+        def __call__(self, audio, _sample_rate):
+            return audio
+
+    monkeypatch.setattr("audo_eq.processing.Pedalboard", lambda _plugins: _BypassChain())
+
+    limiter_calls = {"count": 0}
+
+    class _LimiterStub:
+        def __call__(self, audio, _sample_rate):
+            limiter_calls["count"] += 1
+            return audio
+
+    monkeypatch.setattr("audo_eq.processing.Limiter", lambda **_: _LimiterStub())
+
+    measured_lufs = iter([-18.0, -15.0, -14.05])
+    monkeypatch.setattr(
+        "audo_eq.processing.measure_integrated_lufs",
+        lambda *_args, **_kwargs: next(measured_lufs),
+    )
+    monkeypatch.setattr(
+        "audo_eq.processing.apply_true_peak_guard",
+        lambda audio, _sample_rate, **_: audio,
+    )
+
+    mastered = apply_processing_with_loudness_target(
+        target_audio=source,
+        sample_rate=48_000,
+        decision=decision,
+        loudness_gain_db=0.0,
+        target_lufs=-14.0,
+        eq_preset=EqPreset.NEUTRAL,
+    )
+
+    assert mastered.shape == source.shape
+    assert limiter_calls["count"] == 3

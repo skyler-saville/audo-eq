@@ -26,6 +26,7 @@ class LoudnessTuning:
 
     post_limiter_lufs_tolerance: float
     max_post_limiter_correction_db: float
+    max_convergence_iterations: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +103,8 @@ MASTERING_PROFILE_ALIASES: dict[str, str] = {
     "reference-mastering-default": "default",
     "reference-mastering-conservative": "conservative",
     "reference-mastering-aggressive": "aggressive",
+    "streaming-balanced": "default",
+    "streaming-loud": "aggressive",
 }
 
 
@@ -543,22 +546,23 @@ def apply_processing_with_loudness_target(
     limiter = Limiter(threshold_db=decision.limiter_ceiling_db, release_ms=150.0)
     limited_audio = limiter(pre_limiter_audio, sample_rate)
 
-    final_lufs = measure_integrated_lufs(limited_audio, sample_rate)
-    correction_db = float(
-        np.clip(
-            target_lufs - final_lufs,
-            -loudness_tuning.max_post_limiter_correction_db,
-            loudness_tuning.max_post_limiter_correction_db,
+    converged_audio = limited_audio
+    for _ in range(loudness_tuning.max_convergence_iterations):
+        final_lufs = measure_integrated_lufs(converged_audio, sample_rate)
+        correction_db = float(
+            np.clip(
+                target_lufs - final_lufs,
+                -loudness_tuning.max_post_limiter_correction_db,
+                loudness_tuning.max_post_limiter_correction_db,
+            )
         )
-    )
-    if abs(correction_db) < loudness_tuning.post_limiter_lufs_tolerance:
-        return apply_true_peak_guard(
-            limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning
-        )
+        if abs(correction_db) < loudness_tuning.post_limiter_lufs_tolerance:
+            break
 
-    post_gain = Gain(gain_db=correction_db)
-    corrected_audio = post_gain(limited_audio, sample_rate)
-    corrected_limited_audio = limiter(corrected_audio, sample_rate)
+        post_gain = Gain(gain_db=correction_db)
+        corrected_audio = post_gain(converged_audio, sample_rate)
+        converged_audio = limiter(corrected_audio, sample_rate)
+
     return apply_true_peak_guard(
-        corrected_limited_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning
+        converged_audio, sample_rate, limiter=limiter, tuning=true_peak_tuning
     )
