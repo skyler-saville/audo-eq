@@ -213,6 +213,34 @@ poetry run audo-eq master \
 
 The command validates both input files and writes the mastered output to the requested path (creating parent directories if needed).
 
+Batch mastering is also available:
+
+```bash
+poetry run audo-eq batch-master \
+  --manifest ./batch.json \
+  --reference-rule single \
+  --reference ./reference.wav \
+  --output-dir ./mastered \
+  --naming-template "{index:03d}_{target_stem}_mastered.wav" \
+  --concurrency-limit 4
+```
+
+Supported batch input modes:
+
+- `--manifest` accepts `.csv` or `.json`.
+  - CSV headers: `target`, optional `reference`, optional `output`.
+  - JSON format: array of objects with `target`, optional `reference`, optional `output`.
+- `--target-pattern` accepts a filesystem glob (for example `"./inputs/**/*.wav"`) and can be used instead of a manifest.
+
+Reference selection rules (`--reference-rule`):
+
+- `single`: use one `--reference` file for all targets.
+- `manifest`: read `reference` per row from the manifest.
+- `match-by-basename`: lookup references in `--reference-dir` by matching each target stem.
+- `first-in-dir`: use the first file in `--reference-dir` for all targets.
+
+The batch command prints per-item status lines (including each item's correlation ID) and a summary with total/succeeded/failed counts.
+
 For supported ingest/output formats and troubleshooting guidance, see **[docs/audio-format-support.md](docs/audio-format-support.md)**.
 
 ## Run as REST API (FastAPI)
