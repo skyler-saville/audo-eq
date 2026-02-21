@@ -36,6 +36,8 @@ For startup, health checks, incident triage, and rollback procedures, see **[doc
 
 For the domain-driven architecture plan across the next releases, see **[docs/roadmap-ddd.md](docs/roadmap-ddd.md)**.
 
+For the Pi-safe deterministic mastering-core plan and phase deliverables, see **[docs/pi-safe-mastering-core.md](docs/pi-safe-mastering-core.md)**.
+
 ## Setup
 
 ```bash
